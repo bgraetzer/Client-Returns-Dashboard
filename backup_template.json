@@ -1,0 +1,38 @@
+{
+  "2025-12-31": {
+    "date": "2025-12-31",
+    "values": {
+      "ESSDB": 14364.73,
+      "ESSSF": 13527.36,
+      "TAC": 20517.75,
+      "VMIA": 3970.6,
+      "VWA": 30784.76,
+      "VIF": 10421.26
+    },
+    "objectives": {
+      "ESSDB": 4.00,
+      "ESSSF": 4.00,
+      "TAC": 4.00,
+      "VMIA": 4.00,
+      "VWA": 4.00,
+      "VIF": 4.00
+    },
+    "rolling": {
+      "ESSDB": 8,
+      "ESSSF": 8,
+      "TAC": 8,
+      "VMIA": 8,
+      "VWA": 8,
+      "VIF": "inception"
+    },
+    "inflationTypes": {
+      "ESSDB": "CPI",
+      "ESSSF": "CPI",
+      "TAC": "CPI",
+      "VMIA": "CPI",
+      "VWA": "CPI",
+      "VIF": "CPI"
+    },
+    "savedAt": "2025-12-31T23:59:59.999Z"
+  }
+}
