@@ -381,9 +381,11 @@
                         <button onclick="saveForecastInputs()" class="btn btn-secondary">💾 Save Inputs</button>
                         <button onclick="saveForecastData()" class="btn btn-secondary" id="saveForecastBtn" style="display: none;">💾 Save Forecast Results</button>
                         <button onclick="loadForecastData()" class="btn btn-secondary" id="loadForecastBtn">📂 Load Saved Forecast</button>
+                        <select id="savedForecastDatasetSelect" class="btn btn-secondary" style="min-width: 320px; max-width: 520px;"></select>
+                        <button onclick="refreshSavedForecastDatasets()" class="btn btn-secondary">↻ Refresh Saved List</button>
                     </div>
                     <p style="margin-top: 10px; font-size: 0.85em; color: var(--text-secondary);">
-                        <strong>Tip:</strong> Click "Save Inputs" to preserve your inflation and return values. They'll auto-load next time!
+                        <strong>Tip:</strong> Each "Save Forecast Results" creates a named, timestamped dataset (including same-mode and individual quarterly inputs) that you can select and reload.
                     </p>
                 </div>
 

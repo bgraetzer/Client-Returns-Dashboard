@@ -28,6 +28,8 @@ let globalData = {
     forecastQuarters: []
 };
 
+const FORECAST_DATA_LIBRARY_KEY = 'forecastDataLibrary';
+
 // ---------- Helpers ----------
 function formatReturn(value) {
     if (value === null || value === undefined || isNaN(value)) return '—';
@@ -497,7 +499,7 @@ function updateMainTable() {
         if (clientName === 'VIF' || horizonYears === 'inception') {
             // VIF: Calculate from inception (Sep 2023) to selected date
             const actualReturns = client.actual.slice(VIF_INCEPTION_INDEX, asOfDateIndex + 1);
-            actualForPeriod = actualReturns.filter(r => r !== null);
+            actualForPeriod = actualReturns;
             performancePA = calculator.annualizeReturn(actualForPeriod, actualForPeriod.length);
         } else {
             const horizonMonths = (horizonYears || 8) * 12;
@@ -520,7 +522,7 @@ function updateMainTable() {
         if (clientName === 'VIF' || horizonYears === 'inception') {
             // VIF: Calculate from inception to selected date
             const benchmarkReturns = client.benchmark.slice(VIF_INCEPTION_INDEX, asOfDateIndex + 1);
-            benchmarkForPeriod = benchmarkReturns.filter(r => r !== null);
+            benchmarkForPeriod = benchmarkReturns;
             targetReturn = calculator.annualizeReturn(benchmarkForPeriod, benchmarkForPeriod.length);
         } else {
             const horizonMonths = (horizonYears || 8) * 12;
@@ -705,8 +707,8 @@ function updateHistoricalRollingReturnsChart() {
                     const benchmarkReturns = client.benchmark.slice(VIF_INCEPTION_INDEX, endIdx + 1);
                     const months = endIdx - VIF_INCEPTION_INDEX + 1;
                     
-                    actualAnnualized = calculator.annualizeReturn(actualReturns.filter(r => r !== null), months);
-                    benchmarkAnnualized = calculator.annualizeReturn(benchmarkReturns.filter(r => r !== null), months);
+                    actualAnnualized = calculator.annualizeReturn(actualReturns, months);
+                    benchmarkAnnualized = calculator.annualizeReturn(benchmarkReturns, months);
                 } else {
                     // Normal rolling period
                     const rollingMonths = (clientRollingYears || 8) * 12;
@@ -805,8 +807,8 @@ function updateHistoricalRollingReturnsChart() {
                 const benchmarkReturns = client.benchmark.slice(VIF_INCEPTION_INDEX, endIdx + 1);
                 const months = endIdx - VIF_INCEPTION_INDEX + 1;
                 
-                const actualAnnualized = calculator.annualizeReturn(actualReturns.filter(r => r !== null), months);
-                const benchmarkAnnualized = calculator.annualizeReturn(benchmarkReturns.filter(r => r !== null), months);
+                const actualAnnualized = calculator.annualizeReturn(actualReturns, months);
+                const benchmarkAnnualized = calculator.annualizeReturn(benchmarkReturns, months);
                 
                 actualData.push(actualAnnualized);
                 benchmarkData.push(benchmarkAnnualized);
@@ -1321,6 +1323,186 @@ function generateQuarterlyForecast() {
     }
 }
 
+function collectForecastInputsSnapshot() {
+    const snapshot = {
+        forecastYears: document.getElementById('forecastYears')?.value,
+        quarterlyInputMode: document.getElementById('quarterlyInputMode')?.value,
+        inflationCPIQ1to8: document.getElementById('inflationCPIQ1to8')?.value,
+        inflationCPILongTerm: document.getElementById('inflationCPILongTerm')?.value,
+        inflationWPIQ1to8: document.getElementById('inflationWPIQ1to8')?.value,
+        inflationWPILongTerm: document.getElementById('inflationWPILongTerm')?.value,
+        inflationAWEQ1to8: document.getElementById('inflationAWEQ1to8')?.value,
+        inflationAWELongTerm: document.getElementById('inflationAWELongTerm')?.value,
+        actualQ1to8: document.getElementById('actualQ1to8')?.value,
+        actualLongTerm: document.getElementById('actualLongTerm')?.value
+    };
+
+    const inflationTypes = ['CPI', 'WPI', 'AWE'];
+    for (const type of inflationTypes) {
+        for (let i = 1; i <= 8; i++) {
+            snapshot[`inflation${type}Q${i}`] = document.getElementById(`inflation${type}Q${i}`)?.value;
+        }
+    }
+    for (let i = 1; i <= 8; i++) {
+        snapshot[`actualQ${i}`] = document.getElementById(`actualQ${i}`)?.value;
+    }
+
+    return snapshot;
+}
+
+function loadForecastDataLibrary() {
+    let library = [];
+
+    try {
+        const rawLibrary = localStorage.getItem(FORECAST_DATA_LIBRARY_KEY);
+        if (rawLibrary) {
+            const parsed = JSON.parse(rawLibrary);
+            if (Array.isArray(parsed)) {
+                library = parsed;
+            }
+        }
+    } catch (error) {
+        console.warn('Could not parse saved forecast library:', error);
+    }
+
+    if (library.length === 0) {
+        try {
+            const legacyRaw = localStorage.getItem('forecastData');
+            if (legacyRaw) {
+                const legacy = JSON.parse(legacyRaw);
+                if (legacy && legacy.forecastResults && legacy.forecastQuarters && legacy.forecastAssumptions) {
+                    library.push({
+                        id: `legacy-${Date.now()}`,
+                        name: 'Legacy Forecast Save',
+                        timestamp: legacy.timestamp || new Date().toISOString(),
+                        forecastResults: legacy.forecastResults,
+                        forecastQuarters: legacy.forecastQuarters,
+                        forecastAssumptions: legacy.forecastAssumptions,
+                        rollingObjective: legacy.rollingObjective,
+                        inputs: legacy.inputs || {}
+                    });
+                    localStorage.setItem(FORECAST_DATA_LIBRARY_KEY, JSON.stringify(library));
+                }
+            }
+        } catch (error) {
+            console.warn('Could not migrate legacy forecast data:', error);
+        }
+    }
+
+    library.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+    return library;
+}
+
+function saveForecastDataLibrary(library) {
+    localStorage.setItem(FORECAST_DATA_LIBRARY_KEY, JSON.stringify(library));
+}
+
+function formatForecastDatasetLabel(dataset) {
+    const name = dataset?.name || 'Unnamed Forecast';
+    const date = dataset?.timestamp ? new Date(dataset.timestamp) : null;
+    const dateLabel = date && !isNaN(date.getTime())
+        ? date.toLocaleString()
+        : 'Unknown date';
+    const typeLabel = (dataset?.forecastResults && dataset?.forecastQuarters && dataset?.forecastAssumptions)
+        ? 'Forecast + Inputs'
+        : 'Inputs only';
+    return `${name} - ${dateLabel} (${typeLabel})`;
+}
+
+function populateSavedForecastDatasets(selectedId = null) {
+    const select = document.getElementById('savedForecastDatasetSelect');
+    if (!select) return;
+
+    const library = loadForecastDataLibrary();
+    select.innerHTML = '';
+
+    if (library.length === 0) {
+        const option = document.createElement('option');
+        option.value = '';
+        option.textContent = 'No saved datasets';
+        select.appendChild(option);
+        return;
+    }
+
+    for (const dataset of library) {
+        const option = document.createElement('option');
+        option.value = dataset.id;
+        option.textContent = formatForecastDatasetLabel(dataset);
+        select.appendChild(option);
+    }
+
+    if (selectedId && library.some(d => d.id === selectedId)) {
+        select.value = selectedId;
+    } else {
+        select.value = library[0].id;
+    }
+}
+
+function refreshSavedForecastDatasets() {
+    populateSavedForecastDatasets();
+}
+
+function applyForecastInputsSnapshot(inputs) {
+    if (!inputs || typeof inputs !== 'object') return;
+
+    const assignValue = (id, key) => {
+        if (Object.prototype.hasOwnProperty.call(inputs, key)) {
+            const element = document.getElementById(id);
+            if (element) element.value = inputs[key];
+        }
+    };
+
+    assignValue('forecastYears', 'forecastYears');
+    assignValue('quarterlyInputMode', 'quarterlyInputMode');
+    toggleQuarterlyInputs();
+
+    assignValue('inflationCPIQ1to8', 'inflationCPIQ1to8');
+    assignValue('inflationCPILongTerm', 'inflationCPILongTerm');
+    assignValue('inflationWPIQ1to8', 'inflationWPIQ1to8');
+    assignValue('inflationWPILongTerm', 'inflationWPILongTerm');
+    assignValue('inflationAWEQ1to8', 'inflationAWEQ1to8');
+    assignValue('inflationAWELongTerm', 'inflationAWELongTerm');
+    assignValue('actualQ1to8', 'actualQ1to8');
+    assignValue('actualLongTerm', 'actualLongTerm');
+
+    const inflationTypes = ['CPI', 'WPI', 'AWE'];
+    for (const type of inflationTypes) {
+        for (let i = 1; i <= 8; i++) {
+            assignValue(`inflation${type}Q${i}`, `inflation${type}Q${i}`);
+        }
+    }
+    for (let i = 1; i <= 8; i++) {
+        assignValue(`actualQ${i}`, `actualQ${i}`);
+    }
+}
+
+function reviveLoadedForecastData(forecastData) {
+    if (!forecastData || typeof forecastData !== 'object') return forecastData;
+
+    if (Array.isArray(forecastData.forecastQuarters)) {
+        forecastData.forecastQuarters = forecastData.forecastQuarters.map(q => ({
+            ...q,
+            date: q?.date ? new Date(q.date) : q?.date
+        }));
+    }
+
+    if (forecastData.forecastResults && typeof forecastData.forecastResults === 'object') {
+        for (let clientName of Object.keys(forecastData.forecastResults)) {
+            const rows = forecastData.forecastResults[clientName];
+            if (!Array.isArray(rows)) continue;
+            forecastData.forecastResults[clientName] = rows.map(row => ({
+                ...row,
+                quarter: row?.quarter ? {
+                    ...row.quarter,
+                    date: row.quarter.date ? new Date(row.quarter.date) : row.quarter.date
+                } : row?.quarter
+            }));
+        }
+    }
+
+    return forecastData;
+}
+
 // Save forecast data to localStorage
 function saveForecastData() {
     try {
@@ -1328,37 +1510,33 @@ function saveForecastData() {
             alert('⚠️ No forecast data to save. Please generate a forecast first.');
             return;
         }
+
+        const now = new Date();
+        const defaultName = `Forecast ${now.toLocaleString()}`;
+        const enteredName = window.prompt('Enter a name for this forecast dataset:', defaultName);
+        if (enteredName === null) return;
+        const datasetName = enteredName.trim() || defaultName;
         
         const forecastData = {
-            timestamp: new Date().toISOString(),
+            id: `forecast-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+            name: datasetName,
+            timestamp: now.toISOString(),
             forecastResults: globalData.forecastResults,
             forecastQuarters: globalData.forecastQuarters,
             forecastAssumptions: globalData.forecastAssumptions,
             rollingObjective: globalData.rollingObjective,
-            // Save input values
-            inputs: {
-                forecastYears: document.getElementById('forecastYears')?.value,
-                quarterlyInputMode: document.getElementById('quarterlyInputMode')?.value,
-                // CPI inputs
-                inflationCPIQ1to8: document.getElementById('inflationCPIQ1to8')?.value,
-                inflationCPILongTerm: document.getElementById('inflationCPILongTerm')?.value,
-                // WPI inputs
-                inflationWPIQ1to8: document.getElementById('inflationWPIQ1to8')?.value,
-                inflationWPILongTerm: document.getElementById('inflationWPILongTerm')?.value,
-                // AWE inputs
-                inflationAWEQ1to8: document.getElementById('inflationAWEQ1to8')?.value,
-                inflationAWELongTerm: document.getElementById('inflationAWELongTerm')?.value,
-                // Actual inputs
-                actualQ1to8: document.getElementById('actualQ1to8')?.value,
-                actualLongTerm: document.getElementById('actualLongTerm')?.value
-            }
+            inputs: collectForecastInputsSnapshot()
         };
         
+        const library = loadForecastDataLibrary();
+        library.unshift(forecastData);
+        saveForecastDataLibrary(library);
         localStorage.setItem('forecastData', JSON.stringify(forecastData));
+        populateSavedForecastDatasets(forecastData.id);
         
         const successMsg = document.createElement('div');
         successMsg.style.cssText = 'position: fixed; top: 20px; right: 20px; background: #10b981; color: white; padding: 15px 20px; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.2); z-index: 10000; font-weight: 600;';
-        successMsg.textContent = '✅ Forecast data saved successfully!';
+        successMsg.textContent = `✅ Saved dataset: ${datasetName}`;
         document.body.appendChild(successMsg);
         setTimeout(() => document.body.removeChild(successMsg), 3000);
         
@@ -1371,61 +1549,89 @@ function saveForecastData() {
 // Load forecast data from localStorage
 function loadForecastData() {
     try {
-        const savedData = localStorage.getItem('forecastData');
-        if (!savedData) {
+        const library = loadForecastDataLibrary();
+        if (library.length === 0) {
             alert('ℹ️ No saved forecast data found.');
             return;
         }
+
+        const datasetSelect = document.getElementById('savedForecastDatasetSelect');
+        const selectedId = datasetSelect?.value;
+        if (!selectedId) {
+            alert('ℹ️ Please select a saved dataset first.');
+            return;
+        }
+
+        const selectedDataset = library.find(d => d.id === selectedId);
+        if (!selectedDataset) {
+            alert('⚠️ Selected dataset not found. Please refresh saved datasets and try again.');
+            populateSavedForecastDatasets();
+            return;
+        }
         
-        const forecastData = JSON.parse(savedData);
+        const forecastData = reviveLoadedForecastData(selectedDataset);
         const savedDate = new Date(forecastData.timestamp);
+        const hasForecastResults = !!(forecastData.forecastResults && forecastData.forecastQuarters && forecastData.forecastAssumptions);
         
         const confirm = window.confirm(
-            `Load forecast data saved on ${savedDate.toLocaleString()}?\n\n` +
-            'This will restore the forecast results and input values.'
+            `Load dataset "${forecastData.name || 'Unnamed Forecast'}"\n` +
+            `Saved: ${savedDate.toLocaleString()}?\n\n` +
+            (hasForecastResults
+                ? 'This will restore forecast results and all input values (same + individual quarterly inputs).'
+                : 'This dataset has inputs only. It will restore all input values (same + individual quarterly inputs).')
         );
         
         if (!confirm) return;
         
-        // Restore global data
-        globalData.forecastResults = forecastData.forecastResults;
-        globalData.forecastQuarters = forecastData.forecastQuarters;
-        globalData.forecastAssumptions = forecastData.forecastAssumptions;
-        globalData.rollingObjective = forecastData.rollingObjective;
-        
-        // Restore input values
-        if (forecastData.inputs) {
-            const inputs = forecastData.inputs;
-            if (inputs.forecastYears) document.getElementById('forecastYears').value = inputs.forecastYears;
-            if (inputs.quarterlyInputMode) document.getElementById('quarterlyInputMode').value = inputs.quarterlyInputMode;
-            if (inputs.inflationCPIQ1to8) document.getElementById('inflationCPIQ1to8').value = inputs.inflationCPIQ1to8;
-            if (inputs.inflationCPILongTerm) document.getElementById('inflationCPILongTerm').value = inputs.inflationCPILongTerm;
-            if (inputs.inflationWPIQ1to8) document.getElementById('inflationWPIQ1to8').value = inputs.inflationWPIQ1to8;
-            if (inputs.inflationWPILongTerm) document.getElementById('inflationWPILongTerm').value = inputs.inflationWPILongTerm;
-            if (inputs.inflationAWEQ1to8) document.getElementById('inflationAWEQ1to8').value = inputs.inflationAWEQ1to8;
-            if (inputs.inflationAWELongTerm) document.getElementById('inflationAWELongTerm').value = inputs.inflationAWELongTerm;
-            if (inputs.actualQ1to8) document.getElementById('actualQ1to8').value = inputs.actualQ1to8;
-            if (inputs.actualLongTerm) document.getElementById('actualLongTerm').value = inputs.actualLongTerm;
+        applyForecastInputsSnapshot(forecastData.inputs);
+
+        if (hasForecastResults) {
+            // Restore global data
+            globalData.forecastResults = forecastData.forecastResults;
+            globalData.forecastQuarters = forecastData.forecastQuarters;
+            globalData.forecastAssumptions = forecastData.forecastAssumptions;
+            globalData.rollingObjective = forecastData.rollingObjective;
+        }
+
+        // Rebuild selector options (in case loading occurs before generation in this session)
+        const select = document.getElementById('forecastClientSelect');
+        if (select) {
+            const currentSelection = select.value || 'ALL';
+            select.innerHTML = '<option value="ALL">All Clients (FUM Weighted)</option>';
+            for (let clientName in globalData.clients) {
+                const option = document.createElement('option');
+                option.value = clientName;
+                option.textContent = clientName;
+                select.appendChild(option);
+            }
+            if (Array.from(select.options).some(opt => opt.value === currentSelection)) {
+                select.value = currentSelection;
+            }
         }
         
-        // Refresh all displays
-        displayQuarterlyForecast(forecastData.forecastResults, forecastData.rollingObjective);
-        updateForecastChart();
-        updateForecastImpactChart();
-        updateRequiredReturnsChart();
-        displayRequiredReturnsTableData();
-        displayDiagnosticTable();
-        displayRequiredReturnsTable();
-        populateFutureDateSelector();
-        updateFuturePerformanceTable();
+        if (hasForecastResults) {
+            // Refresh all displays
+            displayQuarterlyForecast(forecastData.forecastResults, forecastData.rollingObjective);
+            updateForecastChart();
+            updateForecastImpactChart();
+            updateRequiredReturnsChart();
+            displayRequiredReturnsTableData();
+            displayDiagnosticTable();
+            displayRequiredReturnsTable();
+            populateFutureDateSelector();
+            updateFuturePerformanceTable();
+        }
         
         // Show save button
         const saveBtn = document.getElementById('saveForecastBtn');
         if (saveBtn) saveBtn.style.display = 'inline-block';
+        populateSavedForecastDatasets(forecastData.id);
         
         const successMsg = document.createElement('div');
         successMsg.style.cssText = 'position: fixed; top: 20px; right: 20px; background: #10b981; color: white; padding: 15px 20px; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.2); z-index: 10000; font-weight: 600;';
-        successMsg.textContent = '✅ Forecast data loaded successfully!';
+        successMsg.textContent = hasForecastResults
+            ? `✅ Loaded dataset: ${forecastData.name || 'Unnamed Forecast'}`
+            : `✅ Loaded inputs: ${forecastData.name || 'Unnamed Forecast'}`;
         document.body.appendChild(successMsg);
         setTimeout(() => document.body.removeChild(successMsg), 3000);
         
@@ -1438,29 +1644,38 @@ function loadForecastData() {
 // Save forecast input values to localStorage
 function saveForecastInputs() {
     try {
+        const now = new Date();
+        const defaultName = `Inputs ${now.toLocaleString()}`;
+        const enteredName = window.prompt('Enter a name for this input dataset:', defaultName);
+        if (enteredName === null) return;
+        const datasetName = enteredName.trim() || defaultName;
+
         const inputs = {
-            timestamp: new Date().toISOString(),
-            forecastYears: document.getElementById('forecastYears')?.value,
-            quarterlyInputMode: document.getElementById('quarterlyInputMode')?.value,
-            // CPI inputs
-            inflationCPIQ1to8: document.getElementById('inflationCPIQ1to8')?.value,
-            inflationCPILongTerm: document.getElementById('inflationCPILongTerm')?.value,
-            // WPI inputs
-            inflationWPIQ1to8: document.getElementById('inflationWPIQ1to8')?.value,
-            inflationWPILongTerm: document.getElementById('inflationWPILongTerm')?.value,
-            // AWE inputs
-            inflationAWEQ1to8: document.getElementById('inflationAWEQ1to8')?.value,
-            inflationAWELongTerm: document.getElementById('inflationAWELongTerm')?.value,
-            // Actual inputs
-            actualQ1to8: document.getElementById('actualQ1to8')?.value,
-            actualLongTerm: document.getElementById('actualLongTerm')?.value
+            timestamp: now.toISOString(),
+            ...collectForecastInputsSnapshot()
         };
         
         localStorage.setItem('forecastInputs', JSON.stringify(inputs));
+
+        const datasetEntry = {
+            id: `inputs-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+            name: datasetName,
+            timestamp: now.toISOString(),
+            forecastResults: globalData.forecastResults,
+            forecastQuarters: globalData.forecastQuarters,
+            forecastAssumptions: globalData.forecastAssumptions,
+            rollingObjective: globalData.rollingObjective,
+            inputs: collectForecastInputsSnapshot()
+        };
+
+        const library = loadForecastDataLibrary();
+        library.unshift(datasetEntry);
+        saveForecastDataLibrary(library);
+        populateSavedForecastDatasets(datasetEntry.id);
         
         const successMsg = document.createElement('div');
         successMsg.style.cssText = 'position: fixed; top: 20px; right: 20px; background: #10b981; color: white; padding: 15px 20px; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.2); z-index: 10000; font-weight: 600;';
-        successMsg.textContent = '✅ Forecast inputs saved!';
+        successMsg.textContent = `✅ Saved inputs dataset: ${datasetName}`;
         document.body.appendChild(successMsg);
         setTimeout(() => document.body.removeChild(successMsg), 2000);
         
@@ -1476,21 +1691,7 @@ function loadForecastInputs() {
         if (!savedInputs) return;
         
         const inputs = JSON.parse(savedInputs);
-        
-        // Restore input values
-        if (inputs.forecastYears) document.getElementById('forecastYears').value = inputs.forecastYears;
-        if (inputs.quarterlyInputMode) {
-            document.getElementById('quarterlyInputMode').value = inputs.quarterlyInputMode;
-            toggleQuarterlyInputs(); // Update the input display mode
-        }
-        if (inputs.inflationCPIQ1to8) document.getElementById('inflationCPIQ1to8').value = inputs.inflationCPIQ1to8;
-        if (inputs.inflationCPILongTerm) document.getElementById('inflationCPILongTerm').value = inputs.inflationCPILongTerm;
-        if (inputs.inflationWPIQ1to8) document.getElementById('inflationWPIQ1to8').value = inputs.inflationWPIQ1to8;
-        if (inputs.inflationWPILongTerm) document.getElementById('inflationWPILongTerm').value = inputs.inflationWPILongTerm;
-        if (inputs.inflationAWEQ1to8) document.getElementById('inflationAWEQ1to8').value = inputs.inflationAWEQ1to8;
-        if (inputs.inflationAWELongTerm) document.getElementById('inflationAWELongTerm').value = inputs.inflationAWELongTerm;
-        if (inputs.actualQ1to8) document.getElementById('actualQ1to8').value = inputs.actualQ1to8;
-        if (inputs.actualLongTerm) document.getElementById('actualLongTerm').value = inputs.actualLongTerm;
+        applyForecastInputsSnapshot(inputs);
         
         console.log('Loaded saved forecast inputs from', new Date(inputs.timestamp).toLocaleString());
         
@@ -1634,8 +1835,8 @@ function updateForecastChart() {
                 const benchmarkReturns = client.benchmark.slice(VIF_INCEPTION_INDEX, asOfDateIndex + 1);
                 const months = asOfDateIndex - VIF_INCEPTION_INDEX + 1;
                 
-                histActual = calculator.annualizeReturn(actualReturns.filter(r => r !== null), months);
-                histBenchmark = calculator.annualizeReturn(benchmarkReturns.filter(r => r !== null), months);
+                histActual = calculator.annualizeReturn(actualReturns, months);
+                histBenchmark = calculator.annualizeReturn(benchmarkReturns, months);
             } else {
                 // Normal rolling period
                 const horizonMonths = (horizonYears || 8) * 12;
@@ -1688,8 +1889,8 @@ function updateForecastChart() {
                 const benchmarkReturns = client.benchmark.slice(VIF_INCEPTION_INDEX, asOfDateIndex + 1);
                 const months = asOfDateIndex - VIF_INCEPTION_INDEX + 1;
                 
-                histActual = calculator.annualizeReturn(actualReturns.filter(r => r !== null), months);
-                histBenchmark = calculator.annualizeReturn(benchmarkReturns.filter(r => r !== null), months);
+                histActual = calculator.annualizeReturn(actualReturns, months);
+                histBenchmark = calculator.annualizeReturn(benchmarkReturns, months);
                 histRelative = (histActual !== null && histBenchmark !== null) ? histActual - histBenchmark : null;
             } else {
                 // Normal rolling period
@@ -2910,93 +3111,13 @@ function updateRequiredReturnsChart() {
     });
     
     // Add "All Clients" aggregate line if showing all clients
+    // Use the correct bisection-based aggregate method instead of averaging per-client values
     if (selectedValue === 'ALL' && clientNames.length > 1) {
         const aggregateReturns = [];
         
         for (let q = 0; q < quarters.length; q++) {
-            const monthsFromNow = quarters[q].monthsFromNow;
-            
-            // Calculate weighted required return across all clients
-            let totalWeight = 0;
-            let weightedSum = 0;
-            
-            for (let clientName of clientNames) {
-                const fum = globalData.fumValues[clientName] || 0;
-                if (fum <= 0) continue;
-                
-                const client = globalData.clients[clientName];
-                const clientRollingYears = globalData.clientRollingObjectives[clientName];
-                const forecastResults = globalData.forecastResults;
-                
-                if (!forecastResults || !forecastResults[clientName]) continue;
-                const forecastData = forecastResults[clientName][q];
-                if (!forecastData || forecastData.benchmark === null) continue;
-                
-                const targetAnnual = forecastData.benchmark;
-                
-                let historicalInWindow, futureInWindow, totalMonths, historicalProduct = 1.0;
-                
-                if (clientName === 'VIF' || clientRollingYears === 'inception') {
-                    const historicalMonthsSinceInception = client.actual.length - VIF_INCEPTION_INDEX;
-                    totalMonths = historicalMonthsSinceInception + monthsFromNow;
-                    historicalInWindow = historicalMonthsSinceInception;
-                    futureInWindow = monthsFromNow;
-                    
-                    for (let i = VIF_INCEPTION_INDEX; i < client.actual.length; i++) {
-                        if (client.actual[i] !== null && client.actual[i] !== undefined) {
-                            historicalProduct *= (1 + client.actual[i] / 100);
-                        }
-                    }
-                } else {
-                    const rollingMonths = clientRollingYears * 12;
-                    totalMonths = rollingMonths;
-                    
-                    if (monthsFromNow >= rollingMonths) {
-                        historicalInWindow = 0;
-                        futureInWindow = rollingMonths;
-                    } else {
-                        const historicalNeeded = rollingMonths - monthsFromNow;
-                        historicalInWindow = Math.min(historicalNeeded, client.actual.length);
-                        futureInWindow = rollingMonths - historicalInWindow;
-                    }
-                    
-                    if (historicalInWindow > 0) {
-                        const startIndex = client.actual.length - historicalInWindow;
-                        for (let i = startIndex; i < client.actual.length; i++) {
-                            if (i >= 0 && client.actual[i] !== null && client.actual[i] !== undefined) {
-                                historicalProduct *= (1 + client.actual[i] / 100);
-                            }
-                        }
-                    }
-                }
-                
-                const targetCompounded = Math.pow(1 + targetAnnual / 100, totalMonths / 12);
-                
-                let requiredMonthly;
-                if (futureInWindow > 0) {
-                    const requiredFutureProduct = targetCompounded / historicalProduct;
-                    const requiredMonthlyMultiplier = Math.pow(requiredFutureProduct, 1 / futureInWindow);
-                    requiredMonthly = (requiredMonthlyMultiplier - 1) * 100;
-                } else {
-                    requiredMonthly = 0;
-                }
-                
-                let displayValue;
-                if (monthsFromNow <= 12) {
-                    displayValue = (Math.pow(1 + requiredMonthly / 100, monthsFromNow) - 1) * 100;
-                } else {
-                    displayValue = (Math.pow(1 + requiredMonthly / 100, 12) - 1) * 100;
-                }
-                
-                weightedSum += displayValue * fum;
-                totalWeight += fum;
-            }
-            
-            if (totalWeight > 0) {
-                aggregateReturns.push(weightedSum / totalWeight);
-            } else {
-                aggregateReturns.push(null);
-            }
+            const result = computeAggregateRequiredReturn(q);
+            aggregateReturns.push(result !== null ? result.displayValue : null);
         }
         
         datasets.push({
@@ -3045,6 +3166,101 @@ function updateRequiredReturnsChart() {
             }
         }
     });
+}
+
+// ---------- Aggregate Required Return (correct method) ----------
+/**
+ * Compute the correct FUM-weighted aggregate required return for a given quarter.
+ * Instead of averaging per-client required returns (which is mathematically invalid
+ * due to Jensen's inequality), this uses bisection to find the single monthly return
+ * that makes the FUM-weighted actual rolling return equal the FUM-weighted benchmark
+ * rolling return at the given forecast quarter.
+ *
+ * Returns { displayValue, monthsFromNow } or null if not computable.
+ */
+function computeAggregateRequiredReturn(quarterIndex) {
+    const quarters = globalData.forecastQuarters || [];
+    if (quarterIndex >= quarters.length) return null;
+    
+    const monthsFromNow = quarters[quarterIndex].monthsFromNow;
+    const clientNames = Object.keys(globalData.clients);
+    const forecastResults = globalData.forecastResults;
+    if (!forecastResults) return null;
+
+    // Get the FUM-weighted benchmark rolling return (this is the target)
+    let totalFUM = 0;
+    let weightedBmk = 0;
+    for (let clientName of clientNames) {
+        const fum = globalData.fumValues[clientName] || 0;
+        if (fum <= 0) continue;
+        const fr = forecastResults[clientName]?.[quarterIndex];
+        if (!fr || fr.benchmark === null) continue;
+        weightedBmk += fr.benchmark * fum;
+        totalFUM += fum;
+    }
+    if (totalFUM <= 0) return null;
+    const targetWeightedBenchmark = weightedBmk / totalFUM;
+
+    // Function: given a candidate monthly actual return, compute FUM-weighted actual rolling
+    function computeWeightedActualRolling(candidateMonthly) {
+        let wActual = 0, wFUM = 0;
+        for (let clientName of clientNames) {
+            const fum = globalData.fumValues[clientName] || 0;
+            if (fum <= 0) continue;
+            const client = globalData.clients[clientName];
+            const clientRollingYears = globalData.clientRollingObjectives[clientName];
+
+            // Build combined actual series with candidate monthly return
+            const actualCombined = [...client.actual];
+            for (let m = 0; m < monthsFromNow; m++) {
+                actualCombined.push(candidateMonthly);
+            }
+
+            let actualRolling;
+            if (clientName === 'VIF' || clientRollingYears === 'inception') {
+                const slice = actualCombined.slice(VIF_INCEPTION_INDEX);
+                actualRolling = calculator.annualizeReturn(slice, slice.length);
+            } else {
+                const rollingMonths = (typeof clientRollingYears === 'number' ? clientRollingYears : 8) * 12;
+                if (actualCombined.length >= rollingMonths) {
+                    const window = actualCombined.slice(-rollingMonths);
+                    actualRolling = calculator.annualizeReturn(window, rollingMonths);
+                } else {
+                    actualRolling = null;
+                }
+            }
+            if (actualRolling !== null) {
+                wActual += actualRolling * fum;
+                wFUM += fum;
+            }
+        }
+        return wFUM > 0 ? wActual / wFUM : null;
+    }
+
+    // Bisection: find monthly return where weighted actual = target benchmark
+    let lo = -5.0, hi = 10.0; // monthly return bounds (%)
+    for (let iter = 0; iter < 100; iter++) {
+        const mid = (lo + hi) / 2;
+        const result = computeWeightedActualRolling(mid);
+        if (result === null) return null;
+        if (result < targetWeightedBenchmark) {
+            lo = mid;
+        } else {
+            hi = mid;
+        }
+        if (Math.abs(hi - lo) < 1e-8) break;
+    }
+    const requiredMonthly = (lo + hi) / 2;
+
+    // Convert to display value (cumulative for <=12m, annualized for >12m)
+    let displayValue;
+    if (monthsFromNow <= 12) {
+        displayValue = (Math.pow(1 + requiredMonthly / 100, monthsFromNow) - 1) * 100;
+    } else {
+        displayValue = (Math.pow(1 + requiredMonthly / 100, 12) - 1) * 100;
+    }
+
+    return { displayValue, monthsFromNow, requiredMonthly };
 }
 
 // ---------- Required Returns Table Data ----------
@@ -3163,88 +3379,13 @@ function displayRequiredReturnsTableData() {
         html += '</tr>';
     });
     
-    // Add FUM-weighted aggregate row
+    // Add FUM-weighted aggregate row (using correct aggregate bisection method)
     html += '<tr><td><strong>All Clients (FUM-weighted)</strong></td>';
     
     for (let q = 0; q < numQuarters; q++) {
-        const monthsFromNow = quarters[q].monthsFromNow;
-        let totalWeight = 0;
-        let weightedSum = 0;
-        
-        clientNames.forEach(clientName => {
-            const client = globalData.clients[clientName];
-            const clientRollingYears = globalData.clientRollingObjectives[clientName];
-            const forecastResults = globalData.forecastResults;
-            const fum = globalData.fumValues[clientName] || 0;
-            
-            if (fum <= 0 || !forecastResults || !forecastResults[clientName]) return;
-            
-            const forecastData = forecastResults[clientName][q];
-            if (!forecastData || forecastData.benchmark === null) return;
-            
-            const targetAnnual = forecastData.benchmark;
-            
-            let historicalInWindow, futureInWindow, totalMonths, historicalProduct = 1.0;
-            
-            if (clientName === 'VIF' || clientRollingYears === 'inception') {
-                const historicalMonthsSinceInception = client.actual.length - VIF_INCEPTION_INDEX;
-                totalMonths = historicalMonthsSinceInception + monthsFromNow;
-                historicalInWindow = historicalMonthsSinceInception;
-                futureInWindow = monthsFromNow;
-                
-                for (let i = VIF_INCEPTION_INDEX; i < client.actual.length; i++) {
-                    if (client.actual[i] !== null && client.actual[i] !== undefined) {
-                        historicalProduct *= (1 + client.actual[i] / 100);
-                    }
-                }
-            } else {
-                const rollingMonths = clientRollingYears * 12;
-                totalMonths = rollingMonths;
-                
-                if (monthsFromNow >= rollingMonths) {
-                    historicalInWindow = 0;
-                    futureInWindow = rollingMonths;
-                } else {
-                    const historicalNeeded = rollingMonths - monthsFromNow;
-                    historicalInWindow = Math.min(historicalNeeded, client.actual.length);
-                    futureInWindow = rollingMonths - historicalInWindow;
-                }
-                
-                if (historicalInWindow > 0) {
-                    const startIndex = client.actual.length - historicalInWindow;
-                    for (let i = startIndex; i < client.actual.length; i++) {
-                        if (i >= 0 && client.actual[i] !== null && client.actual[i] !== undefined) {
-                            historicalProduct *= (1 + client.actual[i] / 100);
-                        }
-                    }
-                }
-            }
-            
-            const targetCompounded = Math.pow(1 + targetAnnual / 100, totalMonths / 12);
-            
-            let requiredMonthly;
-            if (futureInWindow > 0) {
-                const requiredFutureProduct = targetCompounded / historicalProduct;
-                const requiredMonthlyMultiplier = Math.pow(requiredFutureProduct, 1 / futureInWindow);
-                requiredMonthly = (requiredMonthlyMultiplier - 1) * 100;
-            } else {
-                requiredMonthly = 0;
-            }
-            
-            let displayValue;
-            if (monthsFromNow <= 12) {
-                displayValue = (Math.pow(1 + requiredMonthly / 100, monthsFromNow) - 1) * 100;
-            } else {
-                displayValue = (Math.pow(1 + requiredMonthly / 100, 12) - 1) * 100;
-            }
-            
-            weightedSum += displayValue * fum;
-            totalWeight += fum;
-        });
-        
-        if (totalWeight > 0) {
-            const avgRequiredReturn = weightedSum / totalWeight;
-            html += `<td><strong>${avgRequiredReturn.toFixed(2)}</strong></td>`;
+        const result = computeAggregateRequiredReturn(q);
+        if (result !== null) {
+            html += `<td><strong>${result.displayValue.toFixed(2)}</strong></td>`;
         } else {
             html += '<td>-</td>';
         }
@@ -3512,7 +3653,8 @@ function updateRequiredReturnsDisplay() {
     const avgInflation = inflationData.quarters.reduce((a, b) => a + b, 0) / inflationData.quarters.length;
     const targetAnnual = objectiveAnnual + (avgInflation * 4);
     const clientRollingYears = globalData.clientRollingObjectives[clientName] || 8;
-    const rollingMonths = clientRollingYears * 12;
+    const isInception = (clientName === 'VIF' || clientRollingYears === 'inception');
+    const rollingMonths = isInception ? null : clientRollingYears * 12;
     const quarters = globalData.forecastQuarters || [];
     
     if (quarters.length === 0) {
@@ -3526,7 +3668,11 @@ function updateRequiredReturnsDisplay() {
     section.style.marginBottom = '30px';
     
     const header = document.createElement('h4');
-    header.textContent = `${clientName} (${clientRollingYears}-Year Rolling) - Target: ${objectiveAnnual.toFixed(2)}% objective + ${avgInflation.toFixed(2)}% avg qtly inflation = ${targetAnnual.toFixed(2)}% p.a.`;
+    if (isInception) {
+        header.textContent = `${clientName} (Since Inception) - Target: ${objectiveAnnual.toFixed(2)}% objective + ${avgInflation.toFixed(2)}% avg qtly inflation = ${targetAnnual.toFixed(2)}% p.a.`;
+    } else {
+        header.textContent = `${clientName} (${clientRollingYears}-Year Rolling) - Target: ${objectiveAnnual.toFixed(2)}% objective + ${avgInflation.toFixed(2)}% avg qtly inflation = ${targetAnnual.toFixed(2)}% p.a.`;
+    }
     section.appendChild(header);
     
     const table = document.createElement('table');
@@ -3590,48 +3736,48 @@ function updateRequiredReturnsDisplay() {
         // Target benchmark rolling return (annualized % p.a.)
         const targetBenchmarkAnnual = forecastData.benchmark;
         
-        // Convert target to compound multiplier over the rolling period
-        const targetCompounded = Math.pow(1 + targetBenchmarkAnnual / 100, rollingMonths / 12);
+        let historicalInWindow, futureInWindow, totalMonths, historicalProduct = 1.0;
         
-        // Calculate historical actual returns that will still be in the rolling window at this quarter
-        // The rolling window at this quarter looks back rollingMonths from the quarter date
-        // We need to determine:
-        // 1. How many historical months (up to FUM date) are in this rolling window
-        // 2. How many future months (after FUM date) are in this rolling window
-        
-        // Maximum historical months that could be in window
-        const historicalMonthsAvailable = client.actual.length;
-        
-        // At this quarter (monthsFromNow in the future), the rolling window includes:
-        // - If monthsFromNow < rollingMonths: some historical + all future months up to this quarter
-        // - If monthsFromNow >= rollingMonths: only future months (all 120 months)
-        
-        let historicalInWindow, futureInWindow;
-        
-        if (monthsFromNow >= rollingMonths) {
-            // Entire rolling window is in the future
-            historicalInWindow = 0;
-            futureInWindow = rollingMonths;
-        } else {
-            // Rolling window includes some historical months
-            const historicalNeeded = rollingMonths - monthsFromNow;
-            historicalInWindow = Math.min(historicalNeeded, historicalMonthsAvailable);
-            futureInWindow = rollingMonths - historicalInWindow;
-        }
-        
-        // Calculate product of historical returns in the window
-        let historicalProduct = 1.0;
-        if (historicalInWindow > 0) {
-            const startIndex = client.actual.length - historicalInWindow;
-            for (let i = startIndex; i < client.actual.length; i++) {
-                if (i >= 0 && client.actual[i] !== null && client.actual[i] !== undefined) {
+        if (isInception) {
+            // VIF: rolling window is from inception to the forecast quarter
+            const historicalMonthsSinceInception = client.actual.length - VIF_INCEPTION_INDEX;
+            totalMonths = historicalMonthsSinceInception + monthsFromNow;
+            historicalInWindow = historicalMonthsSinceInception;
+            futureInWindow = monthsFromNow;
+            
+            // Calculate historical product from inception to now
+            for (let i = VIF_INCEPTION_INDEX; i < client.actual.length; i++) {
+                if (client.actual[i] !== null && client.actual[i] !== undefined) {
                     historicalProduct *= (1 + client.actual[i] / 100);
-                } else {
-                    // If missing data, assume 0% return for that month
-                    // historicalProduct *= 1;
+                }
+            }
+        } else {
+            // Other clients use fixed rolling window
+            totalMonths = rollingMonths;
+            const historicalMonthsAvailable = client.actual.length;
+            
+            if (monthsFromNow >= rollingMonths) {
+                historicalInWindow = 0;
+                futureInWindow = rollingMonths;
+            } else {
+                const historicalNeeded = rollingMonths - monthsFromNow;
+                historicalInWindow = Math.min(historicalNeeded, historicalMonthsAvailable);
+                futureInWindow = rollingMonths - historicalInWindow;
+            }
+            
+            // Calculate product of historical returns in the window
+            if (historicalInWindow > 0) {
+                const startIndex = client.actual.length - historicalInWindow;
+                for (let i = startIndex; i < client.actual.length; i++) {
+                    if (i >= 0 && client.actual[i] !== null && client.actual[i] !== undefined) {
+                        historicalProduct *= (1 + client.actual[i] / 100);
+                    }
                 }
             }
         }
+        
+        // Convert target to compound multiplier over the total period
+        const targetCompounded = Math.pow(1 + targetBenchmarkAnnual / 100, totalMonths / 12);
         
         // Solve for required future monthly return
         // targetCompounded = historicalProduct * (1 + futureMonthly/100)^futureInWindow
@@ -3755,6 +3901,7 @@ function loadEmbeddedData() {
         
         // Load saved forecast inputs if available
         loadForecastInputs();
+        populateSavedForecastDatasets();
 
         updateStatus('✓ Dashboard loaded successfully!');
         
