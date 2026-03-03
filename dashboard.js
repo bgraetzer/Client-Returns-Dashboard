@@ -48,6 +48,33 @@ function getMetricCardClass(value) {
     return cls === 'neutral' ? '' : cls;
 }
 
+function annualToQuarterlyCompounded(annualPercent) {
+    return (Math.pow(1 + annualPercent / 100, 1 / 4) - 1) * 100;
+}
+
+function quarterlyToMonthlyCompounded(quarterlyPercent) {
+    return (Math.pow(1 + quarterlyPercent / 100, 1 / 3) - 1) * 100;
+}
+
+function quarterlyToAnnualCompounded(quarterlyPercent) {
+    return (Math.pow(1 + quarterlyPercent / 100, 4) - 1) * 100;
+}
+
+function annualToMonthlyCompounded(annualPercent) {
+    return (Math.pow(1 + annualPercent / 100, 1 / 12) - 1) * 100;
+}
+
+function getBenchmarkMonthlyReturn(quarterlyInflationPercent, objectiveAnnualPercent) {
+    const objectiveMonthly = annualToMonthlyCompounded(objectiveAnnualPercent);
+    const inflationMonthly = quarterlyToMonthlyCompounded(quarterlyInflationPercent);
+    return objectiveMonthly + inflationMonthly;
+}
+
+function parseNumberOrDefault(value, defaultValue) {
+    const parsed = parseFloat(value);
+    return Number.isFinite(parsed) ? parsed : defaultValue;
+}
+
 // ---------- UI population ----------
 function populateClientSelector() {
     // Legacy function - no longer used
@@ -287,11 +314,10 @@ function updateFuturePerformanceTable() {
                 if (currentQuarter < 8) {
                     quarterlyActual = clientAssumptions.actualQuarters[currentQuarter];
                 } else {
-                    quarterlyActual = clientAssumptions.actualLongTerm / 4;
+                    quarterlyActual = annualToQuarterlyCompounded(clientAssumptions.actualLongTerm);
                 }
                 
-                const actualAnnualTarget = quarterlyActual * 4;
-                const actualMonthly = (Math.pow(1 + actualAnnualTarget / 100, 1/12) - 1) * 100;
+                const actualMonthly = quarterlyToMonthlyCompounded(quarterlyActual);
                 
                 for (let m = 0; m < 3 && monthsAdded < monthsToForecast; m++) {
                     cumulativeReturn *= (1 + actualMonthly / 100);
@@ -352,7 +378,7 @@ function updateFuturePerformanceTable() {
 
             // Investment Objective
             const objectiveInput = document.getElementById(`objective-${clientName}`);
-            const objectiveValue = objectiveInput ? parseFloat(objectiveInput.value) || 4.0 : 4.0;
+            const objectiveValue = objectiveInput ? parseNumberOrDefault(objectiveInput.value, 4.0) : 4.0;
             const inflationType = globalData.clientInflationTypes[clientName] || 'CPI';
             let objectiveText;
             if (clientName === 'VIF' || horizonYears === 'inception') {
@@ -548,7 +574,7 @@ function updateMainTable() {
 
         // Investment Objective
         const objectiveInput = document.getElementById(`objective-${clientName}`);
-        const objectiveValue = objectiveInput ? parseFloat(objectiveInput.value) || 4.0 : 4.0;
+        const objectiveValue = objectiveInput ? parseNumberOrDefault(objectiveInput.value, 4.0) : 4.0;
         const inflationType = globalData.clientInflationTypes[clientName] || 'CPI';
         let objectiveText;
         if (clientName === 'VIF' || horizonYears === 'inception') {
@@ -1096,17 +1122,17 @@ function generateQuarterlyForecast() {
             logDebug(`  ❌ MISSING: objective-${clientName}`);
             throw new Error(`Cannot find objective input for ${clientName}. Check if FUM inputs have been populated.`);
         }
-        const objectiveAnnual = parseFloat(objectiveInput.value) || 4.0;
+        const objectiveAnnual = parseNumberOrDefault(objectiveInput.value, 4.0);
         const clientInflationType = globalData.clientInflationTypes[clientName] || 'CPI';
         const clientInflation = inflationValues[clientInflationType];
         
         // Calculate representative display values (use Q1 values for display)
         const avgInflationQuarterly = clientInflation.quarters[0] || 1.0;
         const avgActualQuarterly = actualValues.quarters[0] || 2.0;
-        const benchmarkAnnualTarget = objectiveAnnual + (avgInflationQuarterly * 4);
-        const actualAnnualTarget = avgActualQuarterly * 4;
-        const benchmarkMonthly = (Math.pow(1 + benchmarkAnnualTarget / 100, 1/12) - 1) * 100;
-        const actualMonthly = (Math.pow(1 + actualAnnualTarget / 100, 1/12) - 1) * 100;
+        const benchmarkMonthly = getBenchmarkMonthlyReturn(avgInflationQuarterly, objectiveAnnual);
+        const benchmarkAnnualTarget = (Math.pow(1 + benchmarkMonthly / 100, 12) - 1) * 100;
+        const actualAnnualTarget = quarterlyToAnnualCompounded(avgActualQuarterly);
+        const actualMonthly = quarterlyToMonthlyCompounded(avgActualQuarterly);
         
         // Store quarterly and long-term values
         forecastAssumptions[clientName] = {
@@ -1183,26 +1209,12 @@ function generateQuarterlyForecast() {
                     quarterlyInflation = assumptions.inflationQuarters[currentQuarter];
                     quarterlyActual = assumptions.actualQuarters[currentQuarter];
                 } else {
-                    // Use long-term annual rates
-                    // Long-term annual should maintain the same relationship: objective + inflation
-                    // If longTerm is 4% annual, that means we want 1% per quarter (simple), which gives 4% annual (simple)
-                    // But to properly maintain 4% annual (compound), we should use: (1.04^(1/4) - 1) * 100
-                    // However, for consistency with the quarterly inputs, we'll use simple division
-                    // so 4% annual inflationbecomes 1% quarter to match the Q1-Q8 inputs
-                    quarterlyInflation = assumptions.inflationLongTerm / 4;
-                    quarterlyActual = assumptions.actualLongTerm / 4;
+                    quarterlyInflation = annualToQuarterlyCompounded(assumptions.inflationLongTerm);
+                    quarterlyActual = annualToQuarterlyCompounded(assumptions.actualLongTerm);
                 }
-                
-                // Build the annual target from quarterly values
-                // Note: quarterlyInflation is the SPREAD over objective (e.g., CPI+)
-                // The benchmark target = objective + inflation spread
-                // For example: 4% objective + 1% * 4 quarters = 8% annual benchmark
-                const benchmarkAnnualTarget = assumptions.objectiveAnnual + (quarterlyInflation * 4);
-                const actualAnnualTarget = quarterlyActual * 4;
-                
-                // Convert annual targets to monthly compounded returns
-                const benchmarkMonthly = (Math.pow(1 + benchmarkAnnualTarget / 100, 1/12) - 1) * 100;
-                const actualMonthly = (Math.pow(1 + actualAnnualTarget / 100, 1/12) - 1) * 100;
+
+                const benchmarkMonthly = getBenchmarkMonthlyReturn(quarterlyInflation, assumptions.objectiveAnnual);
+                const actualMonthly = quarterlyToMonthlyCompounded(quarterlyActual);
                 
                 // Add 3 months for this quarter
                 for (let m = 0; m < 3 && monthsAdded < monthsToAdd; m++) {
@@ -2099,8 +2111,8 @@ function updateForecastImpactChart() {
                         quarterlyInflation = assumptions.inflationQuarters[currentQuarter];
                         quarterlyActual = assumptions.actualQuarters[currentQuarter];
                     } else {
-                        quarterlyInflation = assumptions.inflationLongTerm / 4;
-                        quarterlyActual = assumptions.actualLongTerm / 4;
+                        quarterlyInflation = annualToQuarterlyCompounded(assumptions.inflationLongTerm);
+                        quarterlyActual = annualToQuarterlyCompounded(assumptions.actualLongTerm);
                     }
                     
                     // Only add forecast data if it's non-zero (indicates actual forecast provided)
@@ -2108,10 +2120,8 @@ function updateForecastImpactChart() {
                     const hasBenchmarkData = Math.abs(quarterlyInflation) > 0.001 || Math.abs(assumptions.objectiveAnnual) > 0.001;
                     
                     if (hasActualData || hasBenchmarkData) {
-                        const benchmarkAnnualTarget = assumptions.objectiveAnnual + (quarterlyInflation * 4);
-                        const actualAnnualTarget = quarterlyActual * 4;
-                        const benchmarkMonthly = (Math.pow(1 + benchmarkAnnualTarget / 100, 1/12) - 1) * 100;
-                        const actualMonthly = (Math.pow(1 + actualAnnualTarget / 100, 1/12) - 1) * 100;
+                        const benchmarkMonthly = getBenchmarkMonthlyReturn(quarterlyInflation, assumptions.objectiveAnnual);
+                        const actualMonthly = quarterlyToMonthlyCompounded(quarterlyActual);
                         
                         for (let m = 0; m < 3 && monthsAdded < monthsToAdd; m++) {
                             actualCombined.push(actualMonthly);
@@ -2169,8 +2179,8 @@ function updateForecastImpactChart() {
                         quarterlyInflation = assumptions.inflationQuarters[currentQuarter];
                         quarterlyActual = assumptions.actualQuarters[currentQuarter];
                     } else {
-                        quarterlyInflation = assumptions.inflationLongTerm / 4;
-                        quarterlyActual = assumptions.actualLongTerm / 4;
+                        quarterlyInflation = annualToQuarterlyCompounded(assumptions.inflationLongTerm);
+                        quarterlyActual = annualToQuarterlyCompounded(assumptions.actualLongTerm);
                     }
                     
                     // Only add forecast data if it's non-zero (indicates actual forecast provided)
@@ -2178,10 +2188,8 @@ function updateForecastImpactChart() {
                     const hasBenchmarkData = Math.abs(quarterlyInflation) > 0.001 || Math.abs(assumptions.objectiveAnnual) > 0.001;
                     
                     if (hasActualData || hasBenchmarkData) {
-                        const benchmarkAnnualTarget = assumptions.objectiveAnnual + (quarterlyInflation * 4);
-                        const actualAnnualTarget = quarterlyActual * 4;
-                        const benchmarkMonthly = (Math.pow(1 + benchmarkAnnualTarget / 100, 1/12) - 1) * 100;
-                        const actualMonthly = (Math.pow(1 + actualAnnualTarget / 100, 1/12) - 1) * 100;
+                        const benchmarkMonthly = getBenchmarkMonthlyReturn(quarterlyInflation, assumptions.objectiveAnnual);
+                        const actualMonthly = quarterlyToMonthlyCompounded(quarterlyActual);
                         
                         for (let m = 0; m < 3 && monthsAdded < monthsToAdd; m++) {
                             actualCombined.push(actualMonthly);
@@ -2911,6 +2919,116 @@ async function handlePDFUpload(event) {
     }
 }
 
+function computeClientRequiredReturnForData(clientName, quarterIndex, data) {
+    const quarters = data.forecastQuarters || [];
+    if (quarterIndex < 0 || quarterIndex >= quarters.length) return null;
+
+    const client = data.clients?.[clientName];
+    const assumptions = data.forecastAssumptions?.[clientName];
+    if (!client || !assumptions) return null;
+
+    const monthsFromNow = quarters[quarterIndex].monthsFromNow;
+    if (monthsFromNow <= 0) {
+        return {
+            monthsFromNow,
+            requiredMonthly: 0,
+            requiredQuarterly: 0,
+            requiredCumulative: 0,
+            requiredAnnual: 0,
+            displayValue: 0
+        };
+    }
+
+    const clientRollingYears = data.clientRollingObjectives?.[clientName];
+    const isInception = (clientName === 'VIF' || clientRollingYears === 'inception');
+
+    const benchmarkCombined = [...client.benchmark];
+    let monthsAdded = 0;
+    while (monthsAdded < monthsFromNow) {
+        const currentQuarter = Math.floor(monthsAdded / 3);
+        let quarterlyInflation;
+
+        if (currentQuarter < 8) {
+            quarterlyInflation = assumptions.inflationQuarters[currentQuarter];
+        } else {
+            quarterlyInflation = annualToQuarterlyCompounded(assumptions.inflationLongTerm);
+        }
+
+        const benchmarkMonthly = getBenchmarkMonthlyReturn(quarterlyInflation, assumptions.objectiveAnnual);
+
+        for (let m = 0; m < 3 && monthsAdded < monthsFromNow; m++) {
+            benchmarkCombined.push(benchmarkMonthly);
+            monthsAdded++;
+        }
+    }
+
+    const multiplyReturns = (returns) => {
+        let product = 1.0;
+        for (let i = 0; i < returns.length; i++) {
+            const r = returns[i];
+            if (r !== null && r !== undefined && !isNaN(r)) {
+                product *= (1 + r / 100);
+            }
+        }
+        return product;
+    };
+
+    let futureInWindow;
+    let historicalActualProduct = 1.0;
+    let benchmarkWindowProduct = 1.0;
+
+    if (isInception) {
+        const benchmarkWindow = benchmarkCombined.slice(VIF_INCEPTION_INDEX);
+        const historicalActualWindow = client.actual.slice(VIF_INCEPTION_INDEX);
+
+        benchmarkWindowProduct = multiplyReturns(benchmarkWindow);
+        historicalActualProduct = multiplyReturns(historicalActualWindow);
+        futureInWindow = monthsFromNow;
+    } else {
+        const rollingMonths = (typeof clientRollingYears === 'number' ? clientRollingYears : 8) * 12;
+        const benchmarkWindow = benchmarkCombined.slice(-rollingMonths);
+
+        benchmarkWindowProduct = multiplyReturns(benchmarkWindow);
+
+        const historicalInWindow = Math.max(0, rollingMonths - monthsFromNow);
+        if (historicalInWindow > 0) {
+            const historicalActualWindow = client.actual.slice(-historicalInWindow);
+            historicalActualProduct = multiplyReturns(historicalActualWindow);
+        }
+
+        futureInWindow = Math.min(monthsFromNow, rollingMonths);
+    }
+
+    if (futureInWindow <= 0 || historicalActualProduct <= 0 || benchmarkWindowProduct <= 0) return null;
+
+    const requiredFutureProduct = benchmarkWindowProduct / historicalActualProduct;
+    if (requiredFutureProduct <= 0) return null;
+
+    const requiredMonthly = (Math.pow(requiredFutureProduct, 1 / futureInWindow) - 1) * 100;
+    const requiredQuarterly = (Math.pow(1 + requiredMonthly / 100, 3) - 1) * 100;
+    const requiredCumulative = (Math.pow(1 + requiredMonthly / 100, monthsFromNow) - 1) * 100;
+    const requiredAnnual = (Math.pow(1 + requiredMonthly / 100, 12) - 1) * 100;
+    const displayValue = monthsFromNow <= 12 ? requiredCumulative : requiredAnnual;
+
+    return {
+        monthsFromNow,
+        requiredMonthly,
+        requiredQuarterly,
+        requiredCumulative,
+        requiredAnnual,
+        displayValue
+    };
+}
+
+function computeClientRequiredReturn(clientName, quarterIndex) {
+    return computeClientRequiredReturnForData(clientName, quarterIndex, {
+        clients: globalData.clients,
+        clientRollingObjectives: globalData.clientRollingObjectives,
+        forecastAssumptions: globalData.forecastAssumptions,
+        forecastQuarters: globalData.forecastQuarters
+    });
+}
+
 function parsePDFFUMData(text, filename) {
     const result = {
         date: null,
@@ -3014,87 +3132,16 @@ function updateRequiredReturnsChart() {
     }
     
     clientNames.forEach((clientName, idx) => {
-        const client = globalData.clients[clientName];
-        const clientRollingYears = globalData.clientRollingObjectives[clientName];
-        
-        // Get the forecast results and assumptions for this client
         const forecastResults = globalData.forecastResults;
-        const assumptions = globalData.forecastAssumptions?.[clientName];
-        if (!forecastResults || !forecastResults[clientName] || !assumptions) {
-            return; // Skip if no forecast data
+        if (!forecastResults || !forecastResults[clientName]) {
+            return;
         }
         
         const requiredReturns = [];
         
         for (let q = 0; q < quarters.length; q++) {
-            const monthsFromNow = quarters[q].monthsFromNow;
-            
-            // Use the forecasted benchmark rolling return as the target
-            const forecastData = forecastResults[clientName][q];
-            if (!forecastData || forecastData.benchmark === null) {
-                requiredReturns.push(null);
-                continue;
-            }
-            
-            const targetAnnual = forecastData.benchmark;
-            
-            let historicalInWindow, futureInWindow, totalMonths, historicalProduct = 1.0;
-            
-            // VIF uses inception-to-date calculation
-            if (clientName === 'VIF' || clientRollingYears === 'inception') {
-                const historicalMonthsSinceInception = client.actual.length - VIF_INCEPTION_INDEX;
-                totalMonths = historicalMonthsSinceInception + monthsFromNow;
-                historicalInWindow = historicalMonthsSinceInception;
-                futureInWindow = monthsFromNow;
-                
-                for (let i = VIF_INCEPTION_INDEX; i < client.actual.length; i++) {
-                    if (client.actual[i] !== null && client.actual[i] !== undefined) {
-                        historicalProduct *= (1 + client.actual[i] / 100);
-                    }
-                }
-            } else {
-                const rollingMonths = clientRollingYears * 12;
-                totalMonths = rollingMonths;
-                
-                if (monthsFromNow >= rollingMonths) {
-                    historicalInWindow = 0;
-                    futureInWindow = rollingMonths;
-                } else {
-                    const historicalNeeded = rollingMonths - monthsFromNow;
-                    historicalInWindow = Math.min(historicalNeeded, client.actual.length);
-                    futureInWindow = rollingMonths - historicalInWindow;
-                }
-                
-                if (historicalInWindow > 0) {
-                    const startIndex = client.actual.length - historicalInWindow;
-                    for (let i = startIndex; i < client.actual.length; i++) {
-                        if (i >= 0 && client.actual[i] !== null && client.actual[i] !== undefined) {
-                            historicalProduct *= (1 + client.actual[i] / 100);
-                        }
-                    }
-                }
-            }
-            
-            const targetCompounded = Math.pow(1 + targetAnnual / 100, totalMonths / 12);
-            
-            let requiredMonthly;
-            if (futureInWindow > 0) {
-                const requiredFutureProduct = targetCompounded / historicalProduct;
-                const requiredMonthlyMultiplier = Math.pow(requiredFutureProduct, 1 / futureInWindow);
-                requiredMonthly = (requiredMonthlyMultiplier - 1) * 100;
-            } else {
-                requiredMonthly = 0;
-            }
-            
-            // Show cumulative return up to 1 year, then annualized
-            let displayValue;
-            if (monthsFromNow <= 12) {
-                displayValue = (Math.pow(1 + requiredMonthly / 100, monthsFromNow) - 1) * 100;
-            } else {
-                displayValue = (Math.pow(1 + requiredMonthly / 100, 12) - 1) * 100;
-            }
-            
-            requiredReturns.push(displayValue);
+            const required = computeClientRequiredReturn(clientName, q);
+            requiredReturns.push(required ? required.displayValue : null);
         }
         
         if (showIndividualLines) {
@@ -3290,90 +3337,16 @@ function displayRequiredReturnsTableData() {
     // Calculate required returns for each client (rows)
     clientNames.forEach(clientName => {
         html += `<tr><td><strong>${clientName}</strong></td>`;
-        
-        const client = globalData.clients[clientName];
-        const clientRollingYears = globalData.clientRollingObjectives[clientName];
         const forecastResults = globalData.forecastResults;
         
         for (let q = 0; q < numQuarters; q++) {
-            const monthsFromNow = quarters[q].monthsFromNow;
-            
             if (!forecastResults || !forecastResults[clientName]) {
                 html += '<td>-</td>';
                 continue;
             }
-            
-            const forecastData = forecastResults[clientName][q];
-            if (!forecastData || forecastData.benchmark === null) {
-                html += '<td>-</td>';
-                continue;
-            }
-            
-            const targetAnnual = forecastData.benchmark;
-            
-            let historicalInWindow, futureInWindow, totalMonths, historicalProduct = 1.0;
-            
-            // VIF uses inception-to-date calculation
-            if (clientName === 'VIF' || clientRollingYears === 'inception') {
-                // For VIF: calculate from inception to future quarter
-                const historicalMonthsSinceInception = client.actual.length - VIF_INCEPTION_INDEX;
-                totalMonths = historicalMonthsSinceInception + monthsFromNow;
-                historicalInWindow = historicalMonthsSinceInception;
-                futureInWindow = monthsFromNow;
-                
-                // Calculate historical product from inception to now
-                for (let i = VIF_INCEPTION_INDEX; i < client.actual.length; i++) {
-                    if (client.actual[i] !== null && client.actual[i] !== undefined) {
-                        historicalProduct *= (1 + client.actual[i] / 100);
-                    }
-                }
-            } else {
-                // Other clients use rolling window calculation
-                const rollingMonths = clientRollingYears * 12;
-                totalMonths = rollingMonths;
-                
-                if (monthsFromNow >= rollingMonths) {
-                    historicalInWindow = 0;
-                    futureInWindow = rollingMonths;
-                } else {
-                    const historicalNeeded = rollingMonths - monthsFromNow;
-                    historicalInWindow = Math.min(historicalNeeded, client.actual.length);
-                    futureInWindow = rollingMonths - historicalInWindow;
-                }
-                
-                // Calculate historical product
-                if (historicalInWindow > 0) {
-                    const startIndex = client.actual.length - historicalInWindow;
-                    for (let i = startIndex; i < client.actual.length; i++) {
-                        if (i >= 0 && client.actual[i] !== null && client.actual[i] !== undefined) {
-                            historicalProduct *= (1 + client.actual[i] / 100);
-                        }
-                    }
-                }
-            }
-            
-            // Calculate target compounded return
-            const targetCompounded = Math.pow(1 + targetAnnual / 100, totalMonths / 12);
-            
-            // Calculate required future monthly return
-            let requiredMonthly;
-            if (futureInWindow > 0) {
-                const requiredFutureProduct = targetCompounded / historicalProduct;
-                const requiredMonthlyMultiplier = Math.pow(requiredFutureProduct, 1 / futureInWindow);
-                requiredMonthly = (requiredMonthlyMultiplier - 1) * 100;
-            } else {
-                requiredMonthly = 0;
-            }
-            
-            // Show cumulative return up to 1 year, then annualized
-            let displayValue;
-            if (monthsFromNow <= 12) {
-                displayValue = (Math.pow(1 + requiredMonthly / 100, monthsFromNow) - 1) * 100;
-            } else {
-                displayValue = (Math.pow(1 + requiredMonthly / 100, 12) - 1) * 100;
-            }
-            
-            html += `<td>${displayValue.toFixed(2)}</td>`;
+
+            const required = computeClientRequiredReturn(clientName, q);
+            html += required ? `<td>${required.displayValue.toFixed(2)}</td>` : '<td>-</td>';
         }
         
         html += '</tr>';
@@ -3476,7 +3449,7 @@ function updateDiagnosticDisplay() {
     info.style.color = 'var(--text-secondary)';
     info.innerHTML = `
         <strong>Note:</strong> Future returns use quarterly-specific assumptions (Q1-Q8 have individual values, Q9+ use long-term annual rates).<br>
-        Q1 Example: Actual ${assumptions.actualQuarters[0].toFixed(2)}% quarterly (${(assumptions.actualQuarters[0] * 4).toFixed(2)}% annualized), 
+        Q1 Example: Actual ${assumptions.actualQuarters[0].toFixed(2)}% quarterly (${quarterlyToAnnualCompounded(assumptions.actualQuarters[0]).toFixed(2)}% annualized), 
         Benchmark ${assumptions.inflationQuarters[0].toFixed(2)}% ${inflationType} spread + ${assumptions.objectiveAnnual.toFixed(2)}% objective
     `;
     section.appendChild(info);
@@ -3530,14 +3503,12 @@ function updateDiagnosticDisplay() {
             quarterlyInflation = assumptions.inflationQuarters[i];
             quarterlyActual = assumptions.actualQuarters[i];
         } else {
-            quarterlyInflation = assumptions.inflationLongTerm / 4;
-            quarterlyActual = assumptions.actualLongTerm / 4;
+            quarterlyInflation = annualToQuarterlyCompounded(assumptions.inflationLongTerm);
+            quarterlyActual = annualToQuarterlyCompounded(assumptions.actualLongTerm);
         }
-        
-        const benchmarkAnnualTarget = assumptions.objectiveAnnual + (quarterlyInflation * 4);
-        const actualAnnualTarget = quarterlyActual * 4;
-        const benchmarkMonthly = (Math.pow(1 + benchmarkAnnualTarget / 100, 1/12) - 1) * 100;
-        const actualMonthly = (Math.pow(1 + actualAnnualTarget / 100, 1/12) - 1) * 100;
+
+        const benchmarkMonthly = getBenchmarkMonthlyReturn(quarterlyInflation, assumptions.objectiveAnnual);
+        const actualMonthly = quarterlyToMonthlyCompounded(quarterlyActual);
         const relative = actualMonthly - benchmarkMonthly;
         
         row.innerHTML = `
@@ -3635,7 +3606,7 @@ function updateRequiredReturnsDisplay() {
         return;
     }
     
-    const objectiveAnnual = parseFloat(document.getElementById(`objective-${clientName}`)?.value) || 4.0;
+    const objectiveAnnual = parseNumberOrDefault(document.getElementById(`objective-${clientName}`)?.value, 4.0);
     
     // Get the client's inflation type and corresponding values
     const clientInflationType = globalData.clientInflationTypes[clientName] || 'CPI';
@@ -3651,7 +3622,8 @@ function updateRequiredReturnsDisplay() {
         inflationData = { quarters: Array(8).fill(1.0), longTerm: 4.0 };
     }
     const avgInflation = inflationData.quarters.reduce((a, b) => a + b, 0) / inflationData.quarters.length;
-    const targetAnnual = objectiveAnnual + (avgInflation * 4);
+    const avgBenchmarkMonthly = getBenchmarkMonthlyReturn(avgInflation, objectiveAnnual);
+    const targetAnnual = (Math.pow(1 + avgBenchmarkMonthly / 100, 12) - 1) * 100;
     const clientRollingYears = globalData.clientRollingObjectives[clientName] || 8;
     const isInception = (clientName === 'VIF' || clientRollingYears === 'inception');
     const rollingMonths = isInception ? null : clientRollingYears * 12;
@@ -3733,71 +3705,22 @@ function updateRequiredReturnsDisplay() {
             continue;
         }
         
-        // Target benchmark rolling return (annualized % p.a.)
-        const targetBenchmarkAnnual = forecastData.benchmark;
-        
-        let historicalInWindow, futureInWindow, totalMonths, historicalProduct = 1.0;
-        
-        if (isInception) {
-            // VIF: rolling window is from inception to the forecast quarter
-            const historicalMonthsSinceInception = client.actual.length - VIF_INCEPTION_INDEX;
-            totalMonths = historicalMonthsSinceInception + monthsFromNow;
-            historicalInWindow = historicalMonthsSinceInception;
-            futureInWindow = monthsFromNow;
-            
-            // Calculate historical product from inception to now
-            for (let i = VIF_INCEPTION_INDEX; i < client.actual.length; i++) {
-                if (client.actual[i] !== null && client.actual[i] !== undefined) {
-                    historicalProduct *= (1 + client.actual[i] / 100);
-                }
-            }
-        } else {
-            // Other clients use fixed rolling window
-            totalMonths = rollingMonths;
-            const historicalMonthsAvailable = client.actual.length;
-            
-            if (monthsFromNow >= rollingMonths) {
-                historicalInWindow = 0;
-                futureInWindow = rollingMonths;
-            } else {
-                const historicalNeeded = rollingMonths - monthsFromNow;
-                historicalInWindow = Math.min(historicalNeeded, historicalMonthsAvailable);
-                futureInWindow = rollingMonths - historicalInWindow;
-            }
-            
-            // Calculate product of historical returns in the window
-            if (historicalInWindow > 0) {
-                const startIndex = client.actual.length - historicalInWindow;
-                for (let i = startIndex; i < client.actual.length; i++) {
-                    if (i >= 0 && client.actual[i] !== null && client.actual[i] !== undefined) {
-                        historicalProduct *= (1 + client.actual[i] / 100);
-                    }
-                }
-            }
+        const required = computeClientRequiredReturn(clientName, q);
+        if (!required) {
+            const row = document.createElement('tr');
+            row.innerHTML = `
+                <td>${quarter.label} (${formatQuarterDate(quarter.date)})</td>
+                <td>${monthsFromNow}</td>
+                <td colspan="4" style="text-align: center; color: var(--text-secondary);">Unable to compute required return</td>
+            `;
+            tbody.appendChild(row);
+            continue;
         }
-        
-        // Convert target to compound multiplier over the total period
-        const targetCompounded = Math.pow(1 + targetBenchmarkAnnual / 100, totalMonths / 12);
-        
-        // Solve for required future monthly return
-        // targetCompounded = historicalProduct * (1 + futureMonthly/100)^futureInWindow
-        let requiredMonthly;
-        if (futureInWindow > 0) {
-            const requiredFutureProduct = targetCompounded / historicalProduct;
-            const requiredMonthlyMultiplier = Math.pow(requiredFutureProduct, 1 / futureInWindow);
-            requiredMonthly = (requiredMonthlyMultiplier - 1) * 100;
-        } else {
-            requiredMonthly = 0;
-        }
-        
-        // Convert to cumulative for the period
-        const requiredCumulative = (Math.pow(1 + requiredMonthly / 100, monthsFromNow) - 1) * 100;
-        
-        // Convert to quarterly (3 months compound)
-        const requiredQuarterly = (Math.pow(1 + requiredMonthly / 100, 3) - 1) * 100;
-        
-        // Convert to annual (12 months compound)
-        const requiredAnnual = (Math.pow(1 + requiredMonthly / 100, 12) - 1) * 100;
+
+        const requiredMonthly = required.requiredMonthly;
+        const requiredQuarterly = required.requiredQuarterly;
+        const requiredCumulative = required.requiredCumulative;
+        const requiredAnnual = required.requiredAnnual;
         
         const row = document.createElement('tr');
         // Show cumulative up to 12 months, then annual
