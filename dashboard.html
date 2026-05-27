@@ -7,7 +7,7 @@
     <meta http-equiv="Pragma" content="no-cache">
     <meta http-equiv="Expires" content="0">
     <title>Client Returns Dashboard</title>
-    <link rel="stylesheet" href="styles.css?v=20260222">
+    <link rel="stylesheet" href="styles.css?v=20260409">
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.js"></script>
     <script src="https://cdn.sheetjs.com/xlsx-0.20.1/package/dist/xlsx.full.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
@@ -133,7 +133,7 @@
                         <button onclick="importBackup()" class="btn btn-primary">📥 Import Backup</button>
                     </div>
                 </div>
-                <p style="margin: 15px 0; color: var(--text-secondary);">Enter FUM ($M), Rolling Return Window (years), and Objective (% p.a.) for each client. All data will be saved together.</p>
+                <p style="margin: 15px 0; color: var(--text-secondary);">Enter FUM ($M), Rolling Return Window (years), and Objective (% p.a.) for each client. FUM should be entered as at the latest actual return month-end, and forecasts compound from that base date. All data will be saved together.</p>
                 <div id="fumInputs" class="fum-container">
                     <!-- Dynamic FUM and objective inputs will be generated here -->
                 </div>
@@ -383,6 +383,8 @@
                         <button onclick="loadForecastData()" class="btn btn-secondary" id="loadForecastBtn">📂 Load Saved Forecast</button>
                         <select id="savedForecastDatasetSelect" class="btn btn-secondary" style="min-width: 320px; max-width: 520px;"></select>
                         <button onclick="refreshSavedForecastDatasets()" class="btn btn-secondary">↻ Refresh Saved List</button>
+                        <button onclick="exportForecastAssumptionsExcel()" class="btn btn-secondary">📤 Export Assumptions to Excel</button>
+                        <button onclick="importForecastAssumptionsExcel()" class="btn btn-secondary">📥 Import Assumptions from Excel</button>
                     </div>
                     <p style="margin-top: 10px; font-size: 0.85em; color: var(--text-secondary);">
                         <strong>Tip:</strong> Each "Save Forecast Results" creates a named, timestamped dataset (including same-mode and individual quarterly inputs) that you can select and reload.
@@ -478,7 +480,7 @@
                 </div>
                 <div style="margin-top: 15px; padding: 10px; background-color: #fff3cd; border-left: 4px solid #ffc107;">
                     <p style="margin: 5px 0; font-size: 0.9em;"><strong>Note:</strong> Future performance is based on forecast assumptions entered in the "Forecasting Inputs" section.</p>
-                    <p style="margin: 5px 0; font-size: 0.9em;">FUM projections compound based on actual forecast returns.</p>
+                    <p style="margin: 5px 0; font-size: 0.9em;">FUM projections assume the entered FUM is as at the latest actual month-end and compound only the forecast returns from there.</p>
                 </div>
             </section>
 
@@ -518,8 +520,9 @@
         </div>
     </div>
 
-    <script src="client_data.js?v=20260222n"></script>
-    <script src="calculations.js?v=20260222n"></script>
-    <script src="dashboard.js?v=20260222n"></script>
+    <script src="client_data.js?v=20260416"></script>
+    <script src="default_fum_data.js?v=20260416"></script>
+    <script src="calculations.js?v=20260409"></script>
+    <script src="dashboard.js?v=20260416"></script>
 </body>
 </html>

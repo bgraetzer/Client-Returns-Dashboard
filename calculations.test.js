@@ -9,10 +9,15 @@ describe('FinancialCalculator', function() {
         const calc = new FinancialCalculator();
         assert(calc);
     });
-    it('should handle empty returns gracefully', function() {
+    it('should return null for empty returns', function() {
         const calc = new FinancialCalculator();
         const result = calc.annualizeReturn([], 12);
-        assert.strictEqual(result, 0);
+        assert.strictEqual(result, null);
     });
-    // Add more edge case tests as needed
+    it('should calculate cumulative return for valid monthly data', function() {
+        const calc = new FinancialCalculator();
+        const result = calc.cumulativeReturn([1, 2, -1]);
+        const expected = ((1.01 * 1.02 * 0.99) - 1) * 100;
+        assert(Math.abs(result - expected) < 0.000001);
+    });
 });

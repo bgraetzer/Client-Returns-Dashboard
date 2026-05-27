@@ -24,10 +24,12 @@ describe('FinancialCalculator', function() {
     it('should calculate performance metrics', function() {
         const calc = new FinancialCalculator();
         const metrics = calc.calculatePerformanceMetrics(mockReturns, mockBenchmark);
-        assert(metrics.hasOwnProperty('annualizedReturn'));
-        assert(metrics.hasOwnProperty('relativeReturn'));
-        assert(typeof metrics.annualizedReturn === 'number');
-        assert(typeof metrics.relativeReturn === 'number');
+        assert(metrics.hasOwnProperty('1Y'));
+        assert(metrics.hasOwnProperty('FYTD'));
+        assert(typeof metrics['1Y'].actual === 'number');
+        assert(typeof metrics['1Y'].benchmark === 'number');
+        assert(typeof metrics['1Y'].relative === 'number');
+        assert(approxEqual(metrics['1Y'].relative, metrics['1Y'].actual - metrics['1Y'].benchmark));
     });
 });
 

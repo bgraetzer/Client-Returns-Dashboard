@@ -1,5 +1,6 @@
 // Financial calculations module
 (function() {
+    if (typeof document === 'undefined') return;
     const debugDiv = document.getElementById('debugInfo');
     if (debugDiv) debugDiv.innerHTML += '✓ calculations.js loaded<br>';
 })();
@@ -329,3 +330,7 @@ class FinancialCalculator {
 
 // Export for use in other modules
 const calculator = new FinancialCalculator();
+
+if (typeof module !== 'undefined' && module.exports) {
+    module.exports = { FinancialCalculator, calculator };
+}

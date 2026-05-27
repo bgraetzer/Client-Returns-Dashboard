@@ -2,12 +2,12 @@
 Test: Forecast Rolling Returns vs Required Returns — Diagnostic
 
 This test replicates the dashboard's JavaScript logic in Python to:
-1. Generate forecast rolling returns (actual, benchmark, relative) at Q2 2026
-2. Calculate the required returns shown in the Required Returns Table at Q2 2026
+1. Generate forecast rolling returns (actual, benchmark, relative) at the second forecast quarter
+2. Calculate the required returns shown in the Required Returns Table at the second forecast quarter
 3. Compare the two to determine if there is a logic bug
 
 USER-REPORTED ISSUE:
-  - Forecast chart shows ALL clients FUM-weighted at Q2 2026:
+    - Forecast chart shows ALL clients FUM-weighted at the second forecast quarter:
       Actual = 7.97% p.a., Benchmark = 7.89% p.a., Relative = 0.08% (ahead)
   - Required Returns table shows weighted required return = 4.46% cumulative
   - User's return assumptions are LOWER than 4.46%, yet the forecast says
@@ -36,6 +36,38 @@ HYPOTHESIS:
 import json
 import math
 import sys
+from datetime import datetime
+
+
+def parse_dashboard_date(value):
+    return datetime.strptime(value.split()[0], '%Y-%m-%d')
+
+
+def quarter_end_for(date_value):
+    quarter_month = ((date_value.month - 1) // 3) * 3 + 3
+    if quarter_month == 3:
+        day = 31
+    elif quarter_month == 6:
+        day = 30
+    elif quarter_month == 9:
+        day = 30
+    else:
+        day = 31
+    return datetime(date_value.year, quarter_month, day)
+
+
+def add_quarter(date_value):
+    if date_value.month == 3:
+        return datetime(date_value.year, 6, 30)
+    if date_value.month == 6:
+        return datetime(date_value.year, 9, 30)
+    if date_value.month == 9:
+        return datetime(date_value.year, 12, 31)
+    return datetime(date_value.year + 1, 3, 31)
+
+
+def months_between(start, end):
+    return (end.year - start.year) * 12 + (end.month - start.month)
 
 
 def annualize_return(returns, periods):
@@ -62,9 +94,9 @@ def load_client_data():
 
 
 def load_fum_data():
-    with open('FUM_Data_2025-12-31.json', 'r') as f:
+    with open('FUM_Data_2026-03-31.json', 'r') as f:
         data = json.load(f)
-    return data['2025-12-31']
+    return data['2026-03-31']
 
 
 def run_test():
@@ -129,21 +161,25 @@ def run_test():
         print(f"  Benchmark monthly: {benchmark_monthly:.4f}%")
         print(f"  Actual monthly: {actual_monthly:.4f}%")
         
-        # Last data date is 2025-12-31. Q1 2026 end = 2026-03-31, Q2 2026 end = 2026-06-30
-        # monthsFromNow for Q1 2026 = 3, Q2 2026 = 6
-        months_q1 = 3
-        months_q2 = 6
+        last_data_date = parse_dashboard_date(dates[-1])
+        last_quarter_end = quarter_end_for(last_data_date)
+        q1_end = add_quarter(last_quarter_end) if last_data_date == last_quarter_end else last_quarter_end
+        q2_end = add_quarter(q1_end)
+        q1_label = f"Q{((q1_end.month - 1) // 3) + 1} {q1_end.year}"
+        q2_label = f"Q{((q2_end.month - 1) // 3) + 1} {q2_end.year}"
+        months_q1 = months_between(last_data_date, q1_end)
+        months_q2 = months_between(last_data_date, q2_end)
         
-        print(f"\n  --- FORECAST ROLLING RETURNS at Q2 2026 (6 months forward) ---")
+        print(f"\n  --- FORECAST ROLLING RETURNS at {q2_label} ({months_q2} months forward) ---")
         
-        # For each client, replicate generateQuarterlyForecast at Q2 2026
+        # For each client, replicate generateQuarterlyForecast at the second forecast quarter
         forecast_results = {}
         for client_name, client in clients.items():
             rolling_years = rolling_config.get(client_name, 8)
             actual = list(client['actual'])
             benchmark = list(client['benchmark'])
             
-            # Add 6 months of forecast data
+            # Add forecast months through the second forecast quarter
             actual_combined = actual[:]
             benchmark_combined = benchmark[:]
             for m in range(months_q2):
@@ -197,23 +233,23 @@ def run_test():
         else:
             wa = wb = wr = None
         
-        print(f"\n  Per-client forecast at Q2 2026:")
+        print(f"\n  Per-client forecast at {q2_label}:")
         for cn in ['ESSDB', 'ESSSF', 'TAC', 'VMIA', 'VWA', 'VIF']:
             fr = forecast_results[cn]
             fum = fum_values.get(cn, 0)
             print(f"    {cn:6s}: Actual={fr['actual']:7.2f}% Benchmark={fr['benchmark']:7.2f}%"
                   f" Relative={fr['relative']:+6.2f}%  FUM=${fum:,.0f}M")
         
-        print(f"\n  FUM-Weighted ALL Clients at Q2 2026:")
+        print(f"\n  FUM-Weighted ALL Clients at {q2_label}:")
         print(f"    Actual:    {wa:.2f}% p.a.")
         print(f"    Benchmark: {wb:.2f}% p.a.")
         print(f"    Relative:  {wr:+.2f}%")
         
         # -------------------------------------------------------------------
-        # REQUIRED RETURNS TABLE at Q2 2026
+        # REQUIRED RETURNS TABLE at the second forecast quarter
         # -------------------------------------------------------------------
-        print(f"\n  --- REQUIRED RETURNS TABLE at Q2 2026 ---")
-        print(f"  (What cumulative return is needed over next 6 months to make")
+        print(f"\n  --- REQUIRED RETURNS TABLE at {q2_label} ---")
+        print(f"  (What cumulative return is needed over next {months_q2} months to make")
         print(f"   actual rolling return = benchmark rolling return?)")
         
         total_weight_rr = 0
@@ -230,10 +266,10 @@ def run_test():
             if fr['benchmark'] is None:
                 continue
             
-            # TARGET: the forecasted benchmark rolling return at Q2 2026
+            # TARGET: the forecasted benchmark rolling return at the second forecast quarter
             target_annual = fr['benchmark']
             
-            months_from_now = months_q2  # 6
+            months_from_now = months_q2
             
             if client_name == 'VIF' or rolling_years == 'inception':
                 historical_months = len(client['actual']) - VIF_INCEPTION_INDEX
@@ -497,7 +533,7 @@ def run_test():
     w_benchmark = sum(forecast_results[cn]['benchmark'] * fum_values[cn]
                       for cn in clients if forecast_results[cn]['benchmark'] is not None) / total_fum
     
-    print(f"\n  FUM-Weighted Forecast at Q2 2026:")
+    print(f"\n  FUM-Weighted Forecast at {q2_label}:")
     print(f"    Actual rolling:    {w_actual:.2f}% p.a.")
     print(f"    Benchmark rolling: {w_benchmark:.2f}% p.a.")
     print(f"    Portfolio is {'AHEAD' if w_actual > w_benchmark else 'BEHIND'} by {w_actual - w_benchmark:+.2f}%")

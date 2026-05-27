@@ -30,6 +30,29 @@ let globalData = {
 
 const FORECAST_DATA_LIBRARY_KEY = 'forecastDataLibrary';
 
+function seedDefaultFUMDatasets() {
+    if (typeof DEFAULT_FUM_DATASETS === 'undefined' || !DEFAULT_FUM_DATASETS) return;
+
+    const existing = JSON.parse(localStorage.getItem('clientFUMDatasets') || '{}');
+    const merged = { ...existing };
+    let hasChanges = false;
+
+    for (const [date, dataset] of Object.entries(DEFAULT_FUM_DATASETS)) {
+        const currentDataset = existing[date];
+        const currentSignature = currentDataset ? JSON.stringify(currentDataset) : null;
+        const incomingSignature = JSON.stringify(dataset);
+
+        if (currentSignature !== incomingSignature) {
+            merged[date] = dataset;
+            hasChanges = true;
+        }
+    }
+
+    if (hasChanges) {
+        localStorage.setItem('clientFUMDatasets', JSON.stringify(merged));
+    }
+}
+
 // ---------- Helpers ----------
 function formatReturn(value) {
     if (value === null || value === undefined || isNaN(value)) return '—';
@@ -73,6 +96,37 @@ function getBenchmarkMonthlyReturn(quarterlyInflationPercent, objectiveAnnualPer
 function parseNumberOrDefault(value, defaultValue) {
     const parsed = parseFloat(value);
     return Number.isFinite(parsed) ? parsed : defaultValue;
+}
+
+function parseDashboardDate(dateValue) {
+    if (!dateValue) return null;
+    const normalized = typeof dateValue === 'string' ? dateValue.replace(' ', 'T') : dateValue;
+    const parsed = new Date(normalized);
+    return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+function getLastActualDataDate() {
+    if (!Array.isArray(globalData.dates) || globalData.dates.length === 0) return null;
+    return parseDashboardDate(globalData.dates[globalData.dates.length - 1]);
+}
+
+function getForecastAnchorDate() {
+    return getLastActualDataDate() || parseDashboardDate(document.getElementById('fumDate')?.value) || new Date();
+}
+
+function getLatestActualDateInputValue() {
+    const latestActualDate = getLastActualDataDate();
+    return latestActualDate ? latestActualDate.toISOString().split('T')[0] : '';
+}
+
+function setFUMDateToLatestActualDate() {
+    const dateInput = document.getElementById('fumDate');
+    if (!dateInput) return;
+
+    const latestActualDateValue = getLatestActualDateInputValue();
+    if (latestActualDateValue) {
+        dateInput.value = latestActualDateValue;
+    }
 }
 
 // ---------- UI population ----------
@@ -241,7 +295,7 @@ function populateFutureDateSelector() {
         select.appendChild(option);
     }
     
-    // Default to the first forecast quarter (Q1 2026)
+    // Default to the first forecast quarter after the latest actual return month
     if (select.options.length > 0) {
         select.selectedIndex = 0;
     }
@@ -272,11 +326,8 @@ function updateFuturePerformanceTable() {
         return;
     }
     
-    // Get the current as-of date for calculating cumulative returns from now to forecast date
-    const currentDateSelect = document.getElementById('performanceAsOfDate');
-    const currentDateIndex = currentDateSelect ? parseInt(currentDateSelect.value) : globalData.dates.length - 1;
-    
-    // Calculate cumulative actual returns from current date to forecast date for FUM growth
+    // FUM projections assume the entered FUM is already at the latest actual month-end,
+    // so only forecast returns are compounded from that base.
     const monthsToForecast = globalData.forecastQuarters[quarterIndex].monthsFromNow;
     const assumptions = globalData.forecastAssumptions;
     
@@ -1153,18 +1204,17 @@ function generateQuarterlyForecast() {
     }
 
     logDebug('✓ Step 5: Getting last actual date...');
-    // Last actual date and quarter baseline - use FUM date if specified
-    let lastActualDate = new Date();
+    // Forecasts always start after the latest actual return month.
+    const lastActualDate = getForecastAnchorDate();
     const fumDateInput = document.getElementById('fumDate');
     logDebug(`  fumDate element: ${fumDateInput ? 'found' : 'NOT FOUND'}`);
-    if (fumDateInput && fumDateInput.value) {
-        const parsed = new Date(fumDateInput.value);
-        if (!isNaN(parsed.getTime())) lastActualDate = parsed;
-        logDebug(`  Using FUM date: ${lastActualDate.toISOString()}`);
-    } else if (globalData.dates && globalData.dates.length > 0) {
-        const parsed = new Date(globalData.dates[globalData.dates.length - 1]);
-        if (!isNaN(parsed.getTime())) lastActualDate = parsed;
-        logDebug(`  Using last data date: ${lastActualDate.toISOString()}`);
+    const lastDataDate = getLastActualDataDate();
+    if (lastDataDate) {
+        logDebug(`  Using last data date: ${lastDataDate.toISOString()}`);
+    } else if (fumDateInput && fumDateInput.value) {
+        logDebug(`  No data end date found, falling back to FUM date: ${lastActualDate.toISOString()}`);
+    } else {
+        logDebug(`  No data end date found, falling back to current date: ${lastActualDate.toISOString()}`);
     }
     const lastQuarterEnd = getQuarterEnd(lastActualDate);
     logDebug(`  Last quarter end: ${lastQuarterEnd.toISOString()}`);
@@ -1712,6 +1762,188 @@ function loadForecastInputs() {
     }
 }
 
+// Export forecast assumptions to Excel template
+function exportForecastAssumptionsExcel() {
+    try {
+        const snapshot = collectForecastInputsSnapshot();
+        const inflationTypes = ['CPI', 'WPI', 'AWE'];
+
+        // Build header row and data rows
+        const headers = ['Parameter'];
+        for (let i = 1; i <= 8; i++) headers.push(`Quarter ${i}`);
+        headers.push('Long-term Annual (%)');
+
+        const rows = [headers];
+
+        for (const type of inflationTypes) {
+            const row = [`${type} Inflation (%)`];
+            for (let i = 1; i <= 8; i++) {
+                const val = snapshot[`inflation${type}Q${i}`];
+                row.push(val !== undefined && val !== '' ? parseFloat(val) : '');
+            }
+            row.push(snapshot[`inflation${type}LongTerm`] !== undefined && snapshot[`inflation${type}LongTerm`] !== '' ? parseFloat(snapshot[`inflation${type}LongTerm`]) : '');
+            rows.push(row);
+        }
+
+        // Actual returns row
+        const actualRow = ['Actual Return (%)'];
+        for (let i = 1; i <= 8; i++) {
+            const val = snapshot[`actualQ${i}`];
+            actualRow.push(val !== undefined && val !== '' ? parseFloat(val) : '');
+        }
+        actualRow.push(snapshot.actualLongTerm !== undefined && snapshot.actualLongTerm !== '' ? parseFloat(snapshot.actualLongTerm) : '');
+        rows.push(actualRow);
+
+        // Forecast period row
+        const forecastRow = ['Forecast Period (years)', parseFloat(snapshot.forecastYears) || 8];
+        rows.push(forecastRow);
+
+        // Create workbook
+        const ws = XLSX.utils.aoa_to_sheet(rows);
+
+        // Set column widths
+        ws['!cols'] = [
+            { wch: 24 },
+            ...Array(8).fill({ wch: 12 }),
+            { wch: 20 }
+        ];
+
+        const wb = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(wb, ws, 'Forecast Assumptions');
+
+        const dateStr = new Date().toISOString().split('T')[0];
+        XLSX.writeFile(wb, `Forecast_Assumptions_${dateStr}.xlsx`);
+
+        const msg = document.createElement('div');
+        msg.style.cssText = 'position: fixed; top: 20px; right: 20px; background: #10b981; color: white; padding: 15px 20px; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.2); z-index: 10000; font-weight: 600;';
+        msg.textContent = '✅ Forecast assumptions exported to Excel';
+        document.body.appendChild(msg);
+        setTimeout(() => document.body.removeChild(msg), 2000);
+    } catch (error) {
+        console.error('Error exporting forecast assumptions:', error);
+        alert('❌ Error exporting forecast assumptions: ' + error.message);
+    }
+}
+
+// Import forecast assumptions from Excel template
+function importForecastAssumptionsExcel() {
+    const fileInput = document.createElement('input');
+    fileInput.type = 'file';
+    fileInput.accept = '.xlsx,.xls,.csv';
+
+    fileInput.onchange = function(e) {
+        const file = e.target.files[0];
+        if (!file) return;
+
+        const reader = new FileReader();
+        reader.onload = function(event) {
+            try {
+                const data = new Uint8Array(event.target.result);
+                const wb = XLSX.read(data, { type: 'array' });
+                const ws = wb.Sheets[wb.SheetNames[0]];
+                const rows = XLSX.utils.sheet_to_json(ws, { header: 1 });
+
+                if (rows.length < 2) {
+                    alert('❌ The file appears to be empty or has no data rows.');
+                    return;
+                }
+
+                // Find header row (look for "Parameter" in first column)
+                let headerIdx = -1;
+                for (let i = 0; i < rows.length; i++) {
+                    if (rows[i] && rows[i][0] && String(rows[i][0]).toLowerCase().includes('parameter')) {
+                        headerIdx = i;
+                        break;
+                    }
+                }
+                if (headerIdx === -1) headerIdx = 0;
+
+                const inflationTypeMap = {
+                    'cpi': 'CPI',
+                    'wpi': 'WPI',
+                    'awe': 'AWE'
+                };
+
+                const snapshot = {};
+                let allSame = true;
+
+                for (let r = headerIdx + 1; r < rows.length; r++) {
+                    const row = rows[r];
+                    if (!row || !row[0]) continue;
+                    const label = String(row[0]).toLowerCase().trim();
+
+                    // Detect inflation rows
+                    let matchedType = null;
+                    for (const [key, val] of Object.entries(inflationTypeMap)) {
+                        if (label.includes(key)) {
+                            matchedType = val;
+                            break;
+                        }
+                    }
+
+                    if (matchedType) {
+                        // Quarters 1-8 in columns 1-8
+                        const vals = [];
+                        for (let i = 1; i <= 8; i++) {
+                            const v = row[i] !== undefined && row[i] !== '' ? parseFloat(row[i]) : NaN;
+                            snapshot[`inflation${matchedType}Q${i}`] = isNaN(v) ? '' : String(v);
+                            vals.push(v);
+                        }
+                        // Long-term in column 9
+                        const lt = row[9] !== undefined && row[9] !== '' ? parseFloat(row[9]) : NaN;
+                        snapshot[`inflation${matchedType}LongTerm`] = isNaN(lt) ? '' : String(lt);
+
+                        // Check if all quarterly values are same
+                        const firstVal = vals[0];
+                        if (vals.some(v => !isNaN(v) && v !== firstVal)) allSame = false;
+                        snapshot[`inflation${matchedType}Q1to8`] = !isNaN(firstVal) ? String(firstVal) : '';
+                    }
+
+                    // Detect actual return row
+                    if (label.includes('actual') && label.includes('return')) {
+                        const vals = [];
+                        for (let i = 1; i <= 8; i++) {
+                            const v = row[i] !== undefined && row[i] !== '' ? parseFloat(row[i]) : NaN;
+                            snapshot[`actualQ${i}`] = isNaN(v) ? '' : String(v);
+                            vals.push(v);
+                        }
+                        const lt = row[9] !== undefined && row[9] !== '' ? parseFloat(row[9]) : NaN;
+                        snapshot.actualLongTerm = isNaN(lt) ? '' : String(lt);
+
+                        const firstVal = vals[0];
+                        if (vals.some(v => !isNaN(v) && v !== firstVal)) allSame = false;
+                        snapshot.actualQ1to8 = !isNaN(firstVal) ? String(firstVal) : '';
+                    }
+
+                    // Detect forecast period row
+                    if (label.includes('forecast') && label.includes('period')) {
+                        const v = row[1] !== undefined && row[1] !== '' ? parseFloat(row[1]) : NaN;
+                        if (!isNaN(v)) snapshot.forecastYears = String(v);
+                    }
+                }
+
+                // Set input mode based on whether values differ
+                snapshot.quarterlyInputMode = allSame ? 'same' : 'individual';
+
+                applyForecastInputsSnapshot(snapshot);
+
+                const msg = document.createElement('div');
+                msg.style.cssText = 'position: fixed; top: 20px; right: 20px; background: #10b981; color: white; padding: 15px 20px; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.2); z-index: 10000; font-weight: 600;';
+                msg.textContent = `✅ Imported forecast assumptions from ${file.name}`;
+                document.body.appendChild(msg);
+                setTimeout(() => document.body.removeChild(msg), 3000);
+
+            } catch (error) {
+                console.error('Error importing forecast assumptions:', error);
+                alert('❌ Error importing file: ' + error.message);
+            }
+        };
+        reader.readAsArrayBuffer(file);
+    };
+
+    fileInput.click();
+}
+
 function displayQuarterlyForecast(forecastResults, rollingObjective) {
     const resultsDiv = document.getElementById('forecastResults');
     resultsDiv.style.display = 'block';
@@ -2000,9 +2232,9 @@ function updateForecastImpactChart() {
         }
 
         // STEP 1: Previous window - last rollingMonths BEFORE the current quarter
-        // For Q1 2026: this is historical ending Q4 2025
-        // For Q2 2026: this is historical + Q1 forecast, ending Q1 2026
-        // For Q3 2026: this is historical + Q1 + Q2 forecast, ending Q2 2026, etc.
+        // Previous window is the trailing full rolling window immediately before the current forecast quarter.
+        // For the first forecast quarter, this is the historical window ending at the last actual quarter-end.
+        // Later forecast quarters extend that window with prior forecast quarters.
         const dataBeforeCurrentQuarter = actualCombined.slice(0, -3); // Remove current quarter's 3 months
         const prevActual = dataBeforeCurrentQuarter.slice(-rollingMonths);
         const prevBmk = benchmarkCombined.slice(0, -3).slice(-rollingMonths);
@@ -2550,7 +2782,7 @@ function saveFUMData() {
         }
     }
     
-    const fumDate = document.getElementById('fumDate').value || new Date().toISOString().split('T')[0];
+    const fumDate = document.getElementById('fumDate').value || getLatestActualDateInputValue();
     if (!fumDate) { alert('Please select a date for the FUM data'); return; }
 
     const allSaved = JSON.parse(localStorage.getItem('clientFUMDatasets') || '{}');
@@ -2572,7 +2804,10 @@ function saveFUMData() {
 
 function loadFUMData(dateToLoad = null) {
     const allSaved = JSON.parse(localStorage.getItem('clientFUMDatasets') || '{}');
-    if (Object.keys(allSaved).length === 0) return;
+    if (Object.keys(allSaved).length === 0) {
+        setFUMDateToLatestActualDate();
+        return;
+    }
     let data = null;
     if (dateToLoad && allSaved[dateToLoad]) data = allSaved[dateToLoad];
     else {
@@ -2655,7 +2890,7 @@ function populateSavedDates() {
         select.appendChild(option);
     });
     
-    // If December 31, 2025 should be here but isn't, log a warning
+    // Warn if no saved FUM dates are available.
     if (dates.length === 0) {
         console.warn('No saved FUM dates found in localStorage. If you had previously saved data, it may have been cleared.');
     }
@@ -2730,7 +2965,7 @@ function clearFUMInputs() {
         if (rollingSelect) rollingSelect.value = '8';
     }
     const dateInput = document.getElementById('fumDate');
-    if (dateInput) dateInput.value = '';
+    if (dateInput) dateInput.value = getLatestActualDateInputValue();
     const dateSelect = document.getElementById('savedDatesSelect');
     if (dateSelect) dateSelect.value = '';
     globalData.fumValues = {};
@@ -2739,15 +2974,13 @@ function clearFUMInputs() {
 }
 
 function clearFUMInputsForManualEntry() {
-    // Clear all FUM inputs and set date to today
+    // Clear all FUM inputs and set date to the latest actual return month-end.
     for (let clientName in globalData.clients) {
         const fumInput = document.getElementById(`fum-${clientName}`);
         if (fumInput) fumInput.value = '';
     }
     
-    // Set date to today
-    const dateInput = document.getElementById('fumDate');
-    if (dateInput) dateInput.value = new Date().toISOString().split('T')[0];
+    setFUMDateToLatestActualDate();
     
     globalData.fumValues = {};
     updateMainTable();
@@ -3666,16 +3899,8 @@ function updateRequiredReturnsDisplay() {
     
     const tbody = document.createElement('tbody');
     
-    // Last actual date - use FUM date if specified
-    let lastActualDate = new Date();
-    const fumDateInput = document.getElementById('fumDate')?.value;
-    if (fumDateInput) {
-        const parsed = new Date(fumDateInput);
-        if (!isNaN(parsed.getTime())) lastActualDate = parsed;
-    } else if (globalData.dates && globalData.dates.length > 0) {
-        const parsed = new Date(globalData.dates[globalData.dates.length - 1]);
-        if (!isNaN(parsed.getTime())) lastActualDate = parsed;
-    }
+    // Forecasts are measured from the latest actual return month, not the saved FUM date.
+    const lastActualDate = getForecastAnchorDate();
     
     // Get forecast assumptions
     const assumptions = globalData.forecastAssumptions?.[clientName];
@@ -3813,6 +4038,7 @@ function loadEmbeddedData() {
         updateStatus('✓ Metrics calculated');
 
         updateStatus('Populating UI components...');
+        seedDefaultFUMDatasets();
         populateHistoricalClientSelector();
         populateFUMInputs();
         populateClientForecastInputs();
